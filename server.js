@@ -843,12 +843,14 @@ const callGeminiAPI = async (prompt, config = {}) => {
     throw new Error('GEMINI_API_KEY not configured');
   }
 
-  // Try models in order
+  // Try models in order - use v1 API instead of v1beta
   const modelsToTry = ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const errors = [];
   
   for (const modelName of modelsToTry) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      // Try v1 API first (more stable)
+      const url = `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${apiKey}`;
       
       const response = await fetch(url, {
         method: 'POST',
@@ -871,7 +873,15 @@ const callGeminiAPI = async (prompt, config = {}) => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.log(`Model ${modelName} failed: ${response.status} - ${errorText}`);
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (e) {
+          errorData = { error: { message: errorText } };
+        }
+        const errorMsg = errorData.error?.message || errorText.substring(0, 200);
+        errors.push(`${modelName}: ${response.status} - ${errorMsg}`);
+        console.log(`❌ Model ${modelName} failed: ${response.status} - ${errorMsg}`);
         continue; // Try next model
       }
 
@@ -882,14 +892,19 @@ const callGeminiAPI = async (prompt, config = {}) => {
           text: data.candidates[0].content.parts[0].text,
           modelName
         };
+      } else {
+        errors.push(`${modelName}: Invalid response format`);
+        console.log(`❌ Model ${modelName}: Invalid response format`);
       }
     } catch (error) {
-      console.log(`Model ${modelName} error: ${error.message}`);
+      errors.push(`${modelName}: ${error.message}`);
+      console.log(`❌ Model ${modelName} error: ${error.message}`);
       continue;
     }
   }
   
-  throw new Error('All Gemini models failed. Please check your API key and model availability.');
+  // Return detailed error with all attempted models
+  throw new Error(`All Gemini models failed. Errors: ${errors.join('; ')}. Please check your API key in Railway and verify it's active in Google AI Studio.`);
 };
 
 // Helper functions
