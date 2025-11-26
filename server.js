@@ -14,6 +14,9 @@ const { OAuth2Client } = require('google-auth-library');
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -152,6 +155,11 @@ const userSchema = new mongoose.Schema({
   provider: { type: String, default: 'email' },
   is_premium: { type: Boolean, default: false },
   google_id: { type: String },
+  email_verified: { type: Boolean, default: false },
+  verification_token: { type: String },
+  verification_token_expires: { type: Date },
+  reset_password_token: { type: String },
+  reset_password_expires: { type: Date },
   created_at: { type: Date, default: Date.now }
 });
 
@@ -162,13 +170,52 @@ const transactionSchema = new mongoose.Schema({
   status: { type: String },
   date: { type: Date, default: Date.now },
   invoice_id: { type: String },
-  plan_type: { type: String }
+  plan_type: { type: String },
+  stripe_payment_intent_id: { type: String },
+  stripe_customer_id: { type: String }
 });
 
 const User = mongoose.model('User', userSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
 const client = new OAuth2Client(CLIENT_ID);
+
+// --- EMAIL SERVICE SETUP ---
+const createEmailTransporter = () => {
+  // Use Gmail SMTP or any SMTP service
+  // For production, use environment variables
+  return nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD
+    }
+  });
+};
+
+// Helper function to send emails
+const sendEmail = async (to, subject, html) => {
+  try {
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+      console.warn('⚠️  Email not configured. Set EMAIL_USER and EMAIL_PASSWORD in environment variables.');
+      return { success: false, message: 'Email service not configured' };
+    }
+    
+    const transporter = createEmailTransporter();
+    const info = await transporter.sendMail({
+      from: `"MinihaAI" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html
+    });
+    
+    console.log('✅ Email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('❌ Email send error:', error);
+    return { success: false, error: error.message };
+  }
+};
 
 // --- CORS CONFIGURATION ---
 const allowedOrigins = [
@@ -338,7 +385,8 @@ app.post('/api/auth/google', async (req, res) => {
         name: user.name,
         email: user.email,
         avatar: user.picture,
-        isPremium: user.is_premium
+        isPremium: user.is_premium,
+        emailVerified: user.email_verified || true // Google users are auto-verified
       }
     });
 
@@ -374,6 +422,11 @@ app.post('/api/auth/signup', async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Generate verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpires = new Date();
+    verificationTokenExpires.setHours(verificationTokenExpires.getHours() + 24); // 24 hours
 
     const user = new User({
       id: uuidv4(),
@@ -383,20 +436,46 @@ app.post('/api/auth/signup', async (req, res) => {
       picture: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
       provider: 'email',
       is_premium: false,
+      email_verified: false,
+      verification_token: verificationToken,
+      verification_token_expires: verificationTokenExpires,
       created_at: new Date()
     });
 
     const savedUser = await user.save();
     console.log('✅ User saved to MongoDB:', savedUser.email);
 
+    // Send verification email
+    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.netlify.app';
+    const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
+    
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #e11d48;">Welcome to MinihaAI!</h2>
+        <p>Hi ${user.name},</p>
+        <p>Thank you for signing up! Please verify your email address by clicking the button below:</p>
+        <a href="${verificationUrl}" style="display: inline-block; padding: 12px 24px; background-color: #e11d48; color: white; text-decoration: none; border-radius: 8px; margin: 20px 0;">Verify Email Address</a>
+        <p>Or copy and paste this link into your browser:</p>
+        <p style="color: #666; word-break: break-all;">${verificationUrl}</p>
+        <p>This link will expire in 24 hours.</p>
+        <p>If you didn't create an account, please ignore this email.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="color: #999; font-size: 12px;">© 2025 MinihaAI. All rights reserved.</p>
+      </div>
+    `;
+    
+    await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+
     res.status(201).json({
       success: true,
+      message: 'Account created! Please check your email to verify your account.',
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         avatar: user.picture,
-        isPremium: user.is_premium
+        isPremium: user.is_premium,
+        emailVerified: user.email_verified
       }
     });
   } catch (error) {
@@ -439,6 +518,15 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid credentials' });
     }
 
+    // Check if email is verified (optional - you can make it required)
+    if (!user.email_verified && user.provider === 'email') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Please verify your email address before logging in. Check your inbox for the verification link.',
+        requiresVerification: true
+      });
+    }
+
     res.status(200).json({
       success: true,
       user: {
@@ -446,12 +534,210 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         email: user.email,
         avatar: user.picture,
-        isPremium: user.is_premium
+        isPremium: user.is_premium,
+        emailVerified: user.email_verified
       }
     });
   } catch (error) {
     console.error("Login Error:", error);
     res.status(500).json({ success: false, message: "Server error during login" });
+  }
+});
+
+// --- EMAIL VERIFICATION ---
+app.get('/api/auth/verify-email', async (req, res) => {
+  const { token, email } = req.query;
+  
+  try {
+    if (!token || !email) {
+      return res.status(400).json({ success: false, message: 'Token and email are required' });
+    }
+
+    const user = await User.findOne({ 
+      email,
+      verification_token: token,
+      verification_token_expires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid or expired verification token' 
+      });
+    }
+
+    user.email_verified = true;
+    user.verification_token = undefined;
+    user.verification_token_expires = undefined;
+    await user.save();
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Email verified successfully!' 
+    });
+  } catch (error) {
+    console.error("Email Verification Error:", error);
+    res.status(500).json({ success: false, message: "Email verification failed" });
+  }
+});
+
+// Resend verification email
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const { email } = req.body;
+  
+  try {
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.email_verified) {
+      return res.status(400).json({ success: false, message: 'Email already verified' });
+    }
+
+    // Generate new verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpires = new Date();
+    verificationTokenExpires.setHours(verificationTokenExpires.getHours() + 24);
+
+    user.verification_token = verificationToken;
+    user.verification_token_expires = verificationTokenExpires;
+    await user.save();
+
+    // Send verification email
+    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.netlify.app';
+    const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
+    
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #e11d48;">Verify your MinihaAI account</h2>
+        <p>Hi ${user.name},</p>
+        <p>Please verify your email address by clicking the button below:</p>
+        <a href="${verificationUrl}" style="display: inline-block; padding: 12px 24px; background-color: #e11d48; color: white; text-decoration: none; border-radius: 8px; margin: 20px 0;">Verify Email Address</a>
+        <p>Or copy and paste this link into your browser:</p>
+        <p style="color: #666; word-break: break-all;">${verificationUrl}</p>
+        <p>This link will expire in 24 hours.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="color: #999; font-size: 12px;">© 2025 MinihaAI. All rights reserved.</p>
+      </div>
+    `;
+    
+    await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Verification email sent!' 
+    });
+  } catch (error) {
+    console.error("Resend Verification Error:", error);
+    res.status(500).json({ success: false, message: "Failed to send verification email" });
+  }
+});
+
+// --- PASSWORD RESET ---
+// Request password reset
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  
+  try {
+    const user = await User.findOne({ email });
+    
+    // Don't reveal if user exists (security best practice)
+    if (!user) {
+      return res.status(200).json({ 
+        success: true, 
+        message: 'If an account exists with this email, a password reset link has been sent.' 
+      });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpires = new Date();
+    resetTokenExpires.setHours(resetTokenExpires.getHours() + 1); // 1 hour expiry
+
+    user.reset_password_token = resetToken;
+    user.reset_password_expires = resetTokenExpires;
+    await user.save();
+
+    // Send reset email
+    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.netlify.app';
+    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+    
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #e11d48;">Reset your password</h2>
+        <p>Hi ${user.name},</p>
+        <p>You requested to reset your password. Click the button below to reset it:</p>
+        <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #e11d48; color: white; text-decoration: none; border-radius: 8px; margin: 20px 0;">Reset Password</a>
+        <p>Or copy and paste this link into your browser:</p>
+        <p style="color: #666; word-break: break-all;">${resetUrl}</p>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request this, please ignore this email and your password will remain unchanged.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+        <p style="color: #999; font-size: 12px;">© 2025 MinihaAI. All rights reserved.</p>
+      </div>
+    `;
+    
+    await sendEmail(email, 'Reset your MinihaAI password', emailHtml);
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'If an account exists with this email, a password reset link has been sent.' 
+    });
+  } catch (error) {
+    console.error("Forgot Password Error:", error);
+    res.status(500).json({ success: false, message: "Failed to send reset email" });
+  }
+});
+
+// Reset password with token
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, email, newPassword } = req.body;
+  
+  try {
+    if (!token || !email || !newPassword) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Token, email, and new password are required' 
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Password must be at least 6 characters' 
+      });
+    }
+
+    const user = await User.findOne({ 
+      email,
+      reset_password_token: token,
+      reset_password_expires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid or expired reset token' 
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    user.password = hashedPassword;
+    user.reset_password_token = undefined;
+    user.reset_password_expires = undefined;
+    await user.save();
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Password reset successfully!' 
+    });
+  } catch (error) {
+    console.error("Reset Password Error:", error);
+    res.status(500).json({ success: false, message: "Password reset failed" });
   }
 });
 
@@ -476,30 +762,153 @@ app.get('/api/user/:userId/transactions', async (req, res) => {
   }
 });
 
-// --- PAYMENT ---
-app.post('/api/payment/create', async (req, res) => {
+// --- STRIPE PAYMENT ---
+// Create Stripe Checkout Session
+app.post('/api/payment/create-session', async (req, res) => {
   const { userId, amount } = req.body;
+  
   try {
-    // Update User to Premium
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ success: false, message: 'Stripe not configured' });
+    }
+
+    const user = await User.findOne({ id: userId });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Create or get Stripe customer
+    let customerId = user.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.name,
+        metadata: { userId: user.id }
+      });
+      customerId = customer.id;
+      await User.findOneAndUpdate({ id: userId }, { stripe_customer_id: customerId });
+    }
+
+    // Create checkout session
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: 'MinihaAI Pro Plan',
+            description: 'Unlimited humanizations and advanced features'
+          },
+          unit_amount: Math.round(parseFloat(amount.replace('$', '')) * 100) // Convert to cents
+        },
+        quantity: 1
+      }],
+      mode: 'payment',
+      success_url: `${process.env.FRONTEND_URL || 'https://minihaai.netlify.app'}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || 'https://minihaai.netlify.app'}/pricing`,
+      metadata: { userId }
+    });
+
+    res.status(200).json({ 
+      success: true, 
+      sessionId: session.id,
+      url: session.url 
+    });
+  } catch (error) {
+    console.error("Stripe Session Error:", error);
+    res.status(500).json({ success: false, message: "Payment session creation failed" });
+  }
+});
+
+// Stripe webhook handler (for production)
+app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const userId = session.metadata.userId;
+
+    // Update user to premium
     await User.findOneAndUpdate({ id: userId }, { is_premium: true });
-    
-    // Record Transaction
+
+    // Record transaction
     const transaction = new Transaction({
       id: uuidv4(),
       user_id: userId,
-      amount,
+      amount: `$${(session.amount_total / 100).toFixed(2)}`,
       status: 'Paid',
       date: new Date(),
-      invoice_id: '#INV-' + Math.floor(Math.random() * 1000000),
-      plan_type: 'Pro Plan'
+      invoice_id: `#INV-${session.id.substring(0, 8)}`,
+      plan_type: 'Pro Plan',
+      stripe_payment_intent_id: session.payment_intent,
+      stripe_customer_id: session.customer
     });
     
     await transaction.save();
+    console.log('✅ Payment processed for user:', userId);
+  }
 
-    res.status(200).json({ success: true, transaction });
+  res.json({ received: true });
+});
+
+// Verify payment and upgrade user (for frontend callback)
+app.post('/api/payment/verify', async (req, res) => {
+  const { sessionId } = req.body;
+  
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    
+    if (session.payment_status === 'paid') {
+      const userId = session.metadata.userId;
+      
+      // Update user to premium
+      await User.findOneAndUpdate({ id: userId }, { is_premium: true });
+      
+      // Check if transaction already exists
+      let transaction = await Transaction.findOne({ stripe_payment_intent_id: session.payment_intent });
+      
+      if (!transaction) {
+        transaction = new Transaction({
+          id: uuidv4(),
+          user_id: userId,
+          amount: `$${(session.amount_total / 100).toFixed(2)}`,
+          status: 'Paid',
+          date: new Date(),
+          invoice_id: `#INV-${session.id.substring(0, 8)}`,
+          plan_type: 'Pro Plan',
+          stripe_payment_intent_id: session.payment_intent,
+          stripe_customer_id: session.customer
+        });
+        await transaction.save();
+      }
+
+      const user = await User.findOne({ id: userId });
+      
+      res.status(200).json({ 
+        success: true, 
+        message: 'Payment successful!',
+        user: {
+          id: user.id,
+          isPremium: user.is_premium
+        },
+        transaction
+      });
+    } else {
+      res.status(400).json({ success: false, message: 'Payment not completed' });
+    }
   } catch (error) {
-    console.error("Payment Error:", error);
-    res.status(500).json({ success: false, message: "Payment failed" });
+    console.error("Payment Verification Error:", error);
+    res.status(500).json({ success: false, message: "Payment verification failed" });
   }
 });
 
@@ -520,7 +929,8 @@ app.get('/api/user/:userId', async (req, res) => {
         name: user.name,
         email: user.email,
         avatar: user.picture,
-        isPremium: user.is_premium
+        isPremium: user.is_premium,
+        emailVerified: user.email_verified || true // Google users are auto-verified
       }
     });
   } catch (error) {
