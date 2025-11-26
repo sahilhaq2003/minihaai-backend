@@ -837,6 +837,36 @@ const getGeminiClient = () => {
   return new GoogleGenerativeAI(apiKey);
 };
 
+// Cache for available models
+let availableModelsCache = null;
+let modelsCacheTime = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Get available models from API
+const getAvailableModels = async (apiKey) => {
+  const now = Date.now();
+  if (availableModelsCache && (now - modelsCacheTime) < CACHE_DURATION) {
+    return availableModelsCache;
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+    const response = await axios.get(url);
+    const models = (response.data.models || [])
+      .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+      .map(m => m.name.replace('models/', ''));
+    
+    availableModelsCache = models;
+    modelsCacheTime = now;
+    console.log(`📋 Available models: ${models.join(', ')}`);
+    return models;
+  } catch (error) {
+    console.log('⚠️ Could not fetch available models, using defaults');
+    // Fallback to default models
+    return ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  }
+};
+
 // Use REST API directly for better control and error handling
 const callGeminiAPI = async (prompt, config = {}) => {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -844,13 +874,13 @@ const callGeminiAPI = async (prompt, config = {}) => {
     throw new Error('GEMINI_API_KEY not configured');
   }
 
-  // Try models in order - use v1 API instead of v1beta
-  const modelsToTry = ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  // Get available models dynamically
+  const availableModels = await getAvailableModels(apiKey);
   const errors = [];
   
-  for (const modelName of modelsToTry) {
+  for (const modelName of availableModels) {
     try {
-      // Try v1beta API (standard for Gemini)
+      // Use v1beta API (standard for Gemini)
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
       
       const response = await axios.post(url, {
