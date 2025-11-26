@@ -464,7 +464,26 @@ app.post('/api/auth/signup', async (req, res) => {
       </div>
     `;
     
-    await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+    const emailResult = await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+    
+    // Log email result but don't fail signup if email fails (user can resend)
+    if (!emailResult.success) {
+      console.error('❌ Failed to send verification email:', emailResult.message || emailResult.error);
+      // Still return success but warn about email
+      return res.status(201).json({
+        success: true,
+        message: 'Account created! However, verification email could not be sent. Please use "Resend Verification" if needed.',
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          avatar: user.picture,
+          isPremium: user.is_premium,
+          emailVerified: user.email_verified
+        },
+        emailWarning: true
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -626,7 +645,15 @@ app.post('/api/auth/resend-verification', async (req, res) => {
       </div>
     `;
     
-    await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+    const emailResult = await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+    
+    if (!emailResult.success) {
+      console.error('❌ Failed to resend verification email:', emailResult.message || emailResult.error);
+      return res.status(500).json({ 
+        success: false, 
+        message: emailResult.message || 'Failed to send verification email. Please check email configuration.' 
+      });
+    }
 
     res.status(200).json({ 
       success: true, 
@@ -691,7 +718,18 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       </div>
     `;
     
-    await sendEmail(email, 'Reset your MinihaAI password', emailHtml);
+    const emailResult = await sendEmail(email, 'Reset your MinihaAI password', emailHtml);
+    
+    // Check if email was sent successfully
+    if (!emailResult.success) {
+      console.error('❌ Failed to send password reset email:', emailResult.message || emailResult.error);
+      return res.status(500).json({ 
+        success: false, 
+        message: emailResult.message || 'Failed to send reset email. Please check email configuration.' 
+      });
+    }
+
+    console.log('✅ Password reset email sent to:', email);
 
     res.status(200).json({ 
       success: true, 
