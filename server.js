@@ -862,7 +862,8 @@ app.post('/api/ai/humanize', async (req, res) => {
     }
 
     const genAI = getGeminiClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    // Try gemini-1.5-pro first, fallback to gemini-1.5-flash
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
     
     const cleanInput = preprocessText(text);
     const baseTemp = 0.85 + (intensity / 100) * 0.8;
@@ -887,13 +888,10 @@ SETTINGS:
 INPUT TEXT:
 "${cleanInput}"`;
 
-    const result1 = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: promptPass1 }] }],
-      generationConfig: {
-        temperature: temperature,
-        topP: 0.98,
-        topK: 100,
-      },
+    const result1 = await model.generateContent(promptPass1, {
+      temperature: temperature,
+      topP: 0.98,
+      topK: 100,
     });
 
     const draft = result1.response.text() || '';
@@ -912,12 +910,9 @@ INSTRUCTIONS:
 DRAFT TEXT:
 "${draft}"`;
 
-    const result2 = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: promptPass2 }] }],
-      generationConfig: {
-        temperature: Math.max(temperature - 0.2, 0.7),
-        topP: 0.95,
-      },
+    const result2 = await model.generateContent(promptPass2, {
+      temperature: Math.max(temperature - 0.2, 0.7),
+      topP: 0.95,
     });
 
     const refinedDraft = result2.response.text() || draft;
@@ -944,7 +939,7 @@ app.post('/api/ai/detect', async (req, res) => {
 
     const genAI = getGeminiClient();
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-pro',
+      model: 'gemini-1.5-pro',
       generationConfig: {
         responseMimeType: 'application/json',
       },
@@ -962,9 +957,7 @@ Provide result in JSON format:
   "analysis": "Specific reasons citing detector logic"
 }`;
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    });
+    const result = await model.generateContent(prompt);
 
     const responseText = result.response.text();
     let detectionResult;
@@ -1002,7 +995,7 @@ app.post('/api/ai/evaluate', async (req, res) => {
 
     const genAI = getGeminiClient();
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-pro',
+      model: 'gemini-1.5-pro',
       generationConfig: {
         responseMimeType: 'application/json',
       },
@@ -1026,9 +1019,7 @@ Provide JSON:
   "feedback": "One sentence of constructive feedback"
 }`;
 
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    });
+    const result = await model.generateContent(prompt);
 
     const responseText = result.response.text();
     let evaluationResult;
