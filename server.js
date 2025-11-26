@@ -516,7 +516,9 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Check if email is verified (optional - you can make it required)
+    // Email verification is optional - users can login without verification
+    // If you want to require verification, uncomment the code below:
+    /*
     if (!user.email_verified && user.provider === 'email') {
       return res.status(403).json({ 
         success: false, 
@@ -524,6 +526,7 @@ app.post('/api/auth/login', async (req, res) => {
         requiresVerification: true
       });
     }
+    */
 
     res.status(200).json({
       success: true,
