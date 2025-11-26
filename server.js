@@ -836,6 +836,34 @@ const getGeminiClient = () => {
   return new GoogleGenerativeAI(apiKey);
 };
 
+// Try to get a working model - test different model names
+const getWorkingModel = (genAI) => {
+  // List of models to try in order
+  const modelsToTry = [
+    'gemini-pro',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'models/gemini-pro',
+    'models/gemini-1.5-flash'
+  ];
+  
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      // Test if model works by checking if it has generateContent method
+      if (model && typeof model.generateContent === 'function') {
+        console.log(`✅ Using model: ${modelName}`);
+        return { model, modelName };
+      }
+    } catch (e) {
+      console.log(`❌ Model ${modelName} failed: ${e.message}`);
+      continue;
+    }
+  }
+  
+  throw new Error('No working Gemini model found. Please check your API key and available models.');
+};
+
 // Helper functions
 const preprocessText = (text) => {
   return text
@@ -862,8 +890,7 @@ app.post('/api/ai/humanize', async (req, res) => {
     }
 
     const genAI = getGeminiClient();
-    // Try gemini-1.5-pro first, fallback to gemini-1.5-flash
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+    const { model } = getWorkingModel(genAI);
     
     const cleanInput = preprocessText(text);
     const baseTemp = 0.85 + (intensity / 100) * 0.8;
@@ -938,8 +965,9 @@ app.post('/api/ai/detect', async (req, res) => {
     }
 
     const genAI = getGeminiClient();
+    const { modelName } = getWorkingModel(genAI);
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-pro',
+      model: modelName,
       generationConfig: {
         responseMimeType: 'application/json',
       },
@@ -994,8 +1022,9 @@ app.post('/api/ai/evaluate', async (req, res) => {
     }
 
     const genAI = getGeminiClient();
+    const { modelName } = getWorkingModel(genAI);
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-pro',
+      model: modelName,
       generationConfig: {
         responseMimeType: 'application/json',
       },
