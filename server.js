@@ -1103,6 +1103,41 @@ Provide JSON:
   }
 });
 
+// Diagnostic endpoint to test Gemini API
+app.get('/api/ai/test', async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'GEMINI_API_KEY not set in Railway environment variables',
+        help: 'Go to Railway → Variables → Add GEMINI_API_KEY'
+      });
+    }
+
+    // Test with a simple prompt
+    const testPrompt = 'Say "Hello" in one word.';
+    const testResult = await callGeminiAPI(testPrompt, { temperature: 0.7 });
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Gemini API is working!',
+      modelUsed: testResult.modelName,
+      testResponse: testResult.text,
+      apiKeySet: true,
+      apiKeyPreview: apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 4)
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      apiKeySet: !!process.env.GEMINI_API_KEY,
+      help: 'Check Railway logs for detailed error messages'
+    });
+  }
+});
+
 // --- GET USER BY ID ---
 app.get('/api/user/:userId', async (req, res) => {
   try {
