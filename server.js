@@ -35,38 +35,71 @@ if (MONGODB_URI.includes('@') && !MONGODB_URI.includes('%40')) {
 }
 
 console.log('🔧 Environment Check:');
-console.log('  MONGODB_URI:', MONGODB_URI ? 'Set (hidden for security)' : 'Missing');
-console.log('  GOOGLE_CLIENT_ID:', CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE' ? 'Set' : 'Missing');
+if (!process.env.MONGODB_URI) {
+  console.warn('⚠️  MONGODB_URI not set in environment variables!');
+  console.warn('   Using fallback URI. Make sure to set MONGODB_URI in Railway!');
+} else {
+  console.log('  MONGODB_URI: Set ✓');
+  // Show first part of URI for debugging (without password)
+  const uriPreview = MONGODB_URI.replace(/mongodb\+srv:\/\/[^:]+:[^@]+@/, 'mongodb+srv://***:***@');
+  console.log('  URI Preview:', uriPreview.substring(0, 80) + '...');
+}
+console.log('  GOOGLE_CLIENT_ID:', CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE' ? 'Set ✓' : 'Missing ⚠️');
 console.log('  PORT:', PORT);
 
-// Connect to MongoDB
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 10000,
-  socketTimeoutMS: 45000,
-  connectTimeoutMS: 10000,
-})
-  .then(() => {
+// Connect to MongoDB with retry logic
+async function connectMongoDB() {
+  try {
+    console.log('🔄 Attempting to connect to MongoDB...');
+    
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
+      maxPoolSize: 10,
+    });
+    
     console.log('✅ Connected to MongoDB Atlas');
     console.log('Database:', mongoose.connection.name);
+    console.log('Host:', mongoose.connection.host);
     console.log('Ready State:', mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected');
-  })
-  .catch(err => {
-    console.error('❌ MongoDB connection error:');
+    
+    // Handle connection events
+    mongoose.connection.on('error', (err) => {
+      console.error('❌ MongoDB connection error:', err.message);
+    });
+    
+    mongoose.connection.on('disconnected', () => {
+      console.warn('⚠️  MongoDB disconnected. Attempting to reconnect...');
+      setTimeout(connectMongoDB, 5000);
+    });
+    
+    mongoose.connection.on('reconnected', () => {
+      console.log('✅ MongoDB reconnected');
+    });
+    
+  } catch (err) {
+    console.error('❌ MongoDB connection failed:');
     console.error('  Message:', err.message);
     console.error('  Code:', err.code);
-    console.error('  Full error:', err);
+    console.error('  Name:', err.name);
     
-    // Retry connection after 5 seconds
-    setTimeout(() => {
-      console.log('🔄 Retrying MongoDB connection...');
-      mongoose.connect(MONGODB_URI, {
-        serverSelectionTimeoutMS: 10000,
-        socketTimeoutMS: 45000,
-      }).catch(retryErr => {
-        console.error('❌ Retry failed:', retryErr.message);
-      });
-    }, 5000);
-  });
+    if (err.message.includes('authentication failed')) {
+      console.error('  ⚠️  Check your MongoDB username and password');
+    } else if (err.message.includes('ENOTFOUND') || err.message.includes('getaddrinfo')) {
+      console.error('  ⚠️  Check your MongoDB cluster URL');
+    } else if (err.message.includes('timeout')) {
+      console.error('  ⚠️  Connection timeout - check network access in MongoDB Atlas');
+    }
+    
+    // Retry after 5 seconds
+    console.log('🔄 Retrying connection in 5 seconds...');
+    setTimeout(connectMongoDB, 5000);
+  }
+}
+
+// Start MongoDB connection
+connectMongoDB();
 
 // --- MONGOOSE SCHEMAS ---
 const userSchema = new mongoose.Schema({
@@ -414,4 +447,10 @@ app.get('/api/user/:userId', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`📊 MongoDB Status: ${mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Disconnected'}`);
+  
+  if (mongoose.connection.readyState !== 1) {
+    console.log('⏳ Waiting for MongoDB connection...');
+  }
 });
