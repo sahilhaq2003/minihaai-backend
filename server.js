@@ -863,7 +863,8 @@ const callGeminiAPI = async (prompt, config = {}) => {
             temperature: config.temperature || 0.9,
             topP: config.topP || 0.95,
             topK: config.topK || 40,
-            ...config
+            ...(config.responseMimeType && { responseMimeType: config.responseMimeType }),
+            ...Object.fromEntries(Object.entries(config).filter(([k]) => k !== 'temperature' && k !== 'topP' && k !== 'topK' && k !== 'responseMimeType'))
           }
         })
       });
