@@ -48,7 +48,7 @@ EMAIL_PASSWORD=your-api-key
 
 ### Frontend URL (For email links)
 ```
-FRONTEND_URL=https://minihaai.netlify.app
+FRONTEND_URL=https://minihaai.vercel.app
 ```
 
 ---
@@ -81,7 +81,7 @@ FRONTEND_URL=https://minihaai.netlify.app
 
 Add to Railway:
 ```
-FRONTEND_URL=https://minihaai.netlify.app
+FRONTEND_URL=https://minihaai.vercel.app
 ```
 
 ---

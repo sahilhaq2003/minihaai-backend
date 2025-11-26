@@ -218,7 +218,7 @@ const sendEmail = async (to, subject, html) => {
 
 // --- CORS CONFIGURATION ---
 const allowedOrigins = [
-  'https://minihaai.netlify.app',
+  'https://minihaai.vercel.app',
   'http://localhost:5173',
   'http://localhost:3000'
 ];
@@ -445,7 +445,7 @@ app.post('/api/auth/signup', async (req, res) => {
     console.log('✅ User saved to MongoDB:', savedUser.email);
 
     // Send verification email
-    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.netlify.app';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.vercel.app';
     const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
     
     const emailHtml = `
@@ -608,7 +608,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     await user.save();
 
     // Send verification email
-    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.netlify.app';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.vercel.app';
     const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
     
     const emailHtml = `
@@ -672,7 +672,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     await user.save();
 
     // Send reset email
-    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.netlify.app';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.vercel.app';
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
     
     const emailHtml = `
