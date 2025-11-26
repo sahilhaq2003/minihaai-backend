@@ -16,6 +16,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -821,6 +822,238 @@ app.post('/api/payment/process', async (req, res) => {
   } catch (error) {
     console.error("Payment Processing Error:", error);
     res.status(500).json({ success: false, message: "Payment processing failed" });
+  }
+});
+
+// --- GET USER BY ID ---
+// --- GEMINI API PROXY (Secure - API key on backend only) ---
+// Initialize Gemini client
+const getGeminiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY not configured');
+  }
+  return new GoogleGenerativeAI(apiKey);
+};
+
+// Helper functions
+const preprocessText = (text) => {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
+};
+
+const postprocessText = (text) => {
+  let result = text.trim();
+  result = result.replace(/^["']|["']$/g, '');
+  result = result.replace(/\n{3,}/g, '\n\n');
+  return result;
+};
+
+// Humanize text endpoint
+app.post('/api/ai/humanize', async (req, res) => {
+  try {
+    const { text, tone = 'Natural', vocabulary = 'Standard', intensity = 50 } = req.body;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ success: false, message: 'Text is required' });
+    }
+
+    const genAI = getGeminiClient();
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    
+    const cleanInput = preprocessText(text);
+    const baseTemp = 0.85 + (intensity / 100) * 0.8;
+    const temperature = Math.min(Math.max(baseTemp, 0.7), 1.7);
+
+    // Pass 1: Humanization
+    const promptPass1 = `You are an Elite Anti-Detection Ghostwriter. 
+Your mission is to rewrite the text to bypass aggressive academic detectors: Turnitin, DrillBit, AntiPlag, Originality.ai, GPTZero, and Copyleaks.
+
+THE "HUMAN" ALGORITHM:
+1. DEFEAT TURNITIN/DRILLBIT/ANTIPLAG: Break AI structure patterns. Bury main points in the middle. Change order of information.
+2. DEFEAT QUILLBOT/GRAMMARLY: Use simple, natural vocabulary. Allow sentence fragments. Use contractions.
+3. DEFEAT ORIGINALITY.AI: BANNED WORDS: "delve", "tapestry", "realm", "landscape", "underscores", "crucial", "leverage", "utilize", "orchestrate", "testament", "pivotal", "nuance". BANNED TRANSITIONS: "Moreover", "Furthermore", "In conclusion", "Additionally", "Conversely", "Notably", "Thus", "Hence". USE: "Plus", "On top of that", "Honestly", "So", "But", "Funny enough", "As for", "Besides".
+4. DEFEAT GPTZERO: Mix extremely short sentences (2-5 words) with very long ones (30+ words). Make unpredictable word choices.
+5. FORMATTING: NO bullet points. NO numbered lists. NO bold text. NO headings. Write in continuous, natural paragraphs.
+
+SETTINGS:
+- Tone: ${tone}
+- Vocabulary: ${vocabulary}
+- Intensity: ${intensity}%
+
+INPUT TEXT:
+"${cleanInput}"`;
+
+    const result1 = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: promptPass1 }] }],
+      generationConfig: {
+        temperature: temperature,
+        topP: 0.98,
+        topK: 100,
+      },
+    });
+
+    const draft = result1.response.text() || '';
+    if (!draft) throw new Error('Phase 1 generation failed');
+
+    // Pass 2: Refinement
+    const promptPass2 = `You are a "Humanizer" Editor. Make the text below undetectable by DrillBit, AntiPlag, and Turnitin.
+
+INSTRUCTIONS:
+1. Read Aloud Check: If a sentence sounds too "perfect", rewrite it to sound conversational.
+2. Hyphens: Ensure all dashes are standard hyphens (-), not em-dashes (—).
+3. Kill the Robot: Remove phrases like "In summary", "Ultimately". End naturally.
+4. Anti-Perfection: Do NOT fix "comma splices" or "fragments" if they add to the voice.
+5. Clarity: Ensure meaning is instantly easy to understand.
+
+DRAFT TEXT:
+"${draft}"`;
+
+    const result2 = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: promptPass2 }] }],
+      generationConfig: {
+        temperature: Math.max(temperature - 0.2, 0.7),
+        topP: 0.95,
+      },
+    });
+
+    const refinedDraft = result2.response.text() || draft;
+    const finalText = postprocessText(refinedDraft);
+
+    res.status(200).json({ success: true, text: finalText });
+  } catch (error) {
+    console.error('Humanize Error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to humanize text. Please try again.' 
+    });
+  }
+});
+
+// Detect AI content endpoint
+app.post('/api/ai/detect', async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ success: false, message: 'Text is required' });
+    }
+
+    const genAI = getGeminiClient();
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-2.0-flash-exp',
+      generationConfig: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const prompt = `Analyze this text and determine if it was written by AI or a human.
+
+TEXT:
+"${text.substring(0, 3000)}"
+
+Provide result in JSON format:
+{
+  "score": 0-100 (100 = definitely AI, 0 = definitely Human),
+  "label": "Human-Written" | "Mixed/Edited" | "Fully AI-Generated",
+  "analysis": "Specific reasons citing detector logic"
+}`;
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    });
+
+    const responseText = result.response.text();
+    let detectionResult;
+    
+    try {
+      detectionResult = JSON.parse(responseText);
+    } catch (e) {
+      detectionResult = {
+        score: 0,
+        label: 'Error',
+        analysis: 'Could not parse detection results.'
+      };
+    }
+
+    res.status(200).json({ success: true, ...detectionResult });
+  } catch (error) {
+    console.error('Detection Error:', error);
+    res.status(500).json({ 
+      success: false,
+      score: 0,
+      label: 'Connection Error',
+      analysis: 'Unable to reach the detection service.'
+    });
+  }
+});
+
+// Evaluate quality endpoint
+app.post('/api/ai/evaluate', async (req, res) => {
+  try {
+    const { original, rewritten } = req.body;
+
+    if (!original || !rewritten) {
+      return res.status(400).json({ success: false, message: 'Original and rewritten text are required' });
+    }
+
+    const genAI = getGeminiClient();
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-2.0-flash-exp',
+      generationConfig: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const prompt = `You are a Senior Editor. Compare the ORIGINAL AI text with the REWRITTEN humanized version.
+
+Evaluate on:
+1. Human-Likeness: Does it sound authentically human?
+2. Meaning Preservation: Is the core message preserved?
+3. Sentence Variety: Good mix of short and long sentences?
+
+ORIGINAL: "${original.substring(0, 1000)}"
+REWRITTEN: "${rewritten.substring(0, 1000)}"
+
+Provide JSON:
+{
+  "humanScore": 0-100 (100 = perfectly natural),
+  "meaningPreserved": true/false,
+  "sentenceVariety": "Short assessment",
+  "feedback": "One sentence of constructive feedback"
+}`;
+
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    });
+
+    const responseText = result.response.text();
+    let evaluationResult;
+    
+    try {
+      evaluationResult = JSON.parse(responseText);
+    } catch (e) {
+      evaluationResult = {
+        humanScore: 0,
+        meaningPreserved: false,
+        sentenceVariety: 'Unable to evaluate',
+        feedback: 'Could not parse evaluation results.'
+      };
+    }
+
+    res.status(200).json({ success: true, ...evaluationResult });
+  } catch (error) {
+    console.error('Evaluation Error:', error);
+    res.status(500).json({ 
+      success: false,
+      humanScore: 0,
+      meaningPreserved: false,
+      sentenceVariety: 'Error',
+      feedback: 'Failed to evaluate quality.'
+    });
   }
 });
 
