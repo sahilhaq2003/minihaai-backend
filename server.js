@@ -17,6 +17,7 @@ const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -852,40 +853,24 @@ const callGeminiAPI = async (prompt, config = {}) => {
       // Try v1 API first (more stable)
       const url = `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${apiKey}`;
       
-      const response = await fetch(url, {
-        method: 'POST',
+      const response = await axios.post(url, {
+        contents: [{
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: config.temperature || 0.9,
+          topP: config.topP || 0.95,
+          topK: config.topK || 40,
+          ...(config.responseMimeType && { responseMimeType: config.responseMimeType }),
+          ...Object.fromEntries(Object.entries(config).filter(([k]) => k !== 'temperature' && k !== 'topP' && k !== 'topK' && k !== 'responseMimeType'))
+        }
+      }, {
         headers: {
           'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            temperature: config.temperature || 0.9,
-            topP: config.topP || 0.95,
-            topK: config.topK || 40,
-            ...(config.responseMimeType && { responseMimeType: config.responseMimeType }),
-            ...Object.fromEntries(Object.entries(config).filter(([k]) => k !== 'temperature' && k !== 'topP' && k !== 'topK' && k !== 'responseMimeType'))
-          }
-        })
+        }
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch (e) {
-          errorData = { error: { message: errorText } };
-        }
-        const errorMsg = errorData.error?.message || errorText.substring(0, 200);
-        errors.push(`${modelName}: ${response.status} - ${errorMsg}`);
-        console.log(`❌ Model ${modelName} failed: ${response.status} - ${errorMsg}`);
-        continue; // Try next model
-      }
-
-      const data = await response.json();
+      const data = response.data;
       if (data.candidates && data.candidates[0] && data.candidates[0].content) {
         console.log(`✅ Using model: ${modelName}`);
         return {
@@ -897,8 +882,17 @@ const callGeminiAPI = async (prompt, config = {}) => {
         console.log(`❌ Model ${modelName}: Invalid response format`);
       }
     } catch (error) {
-      errors.push(`${modelName}: ${error.message}`);
-      console.log(`❌ Model ${modelName} error: ${error.message}`);
+      let errorMsg = error.message;
+      if (error.response) {
+        // Axios error with response
+        const errorData = error.response.data || {};
+        errorMsg = errorData.error?.message || error.response.statusText || error.message;
+        errors.push(`${modelName}: ${error.response.status} - ${errorMsg}`);
+        console.log(`❌ Model ${modelName} failed: ${error.response.status} - ${errorMsg}`);
+      } else {
+        errors.push(`${modelName}: ${errorMsg}`);
+        console.log(`❌ Model ${modelName} error: ${errorMsg}`);
+      }
       continue;
     }
   }
