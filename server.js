@@ -850,8 +850,8 @@ const callGeminiAPI = async (prompt, config = {}) => {
   
   for (const modelName of modelsToTry) {
     try {
-      // Try v1 API first (more stable)
-      const url = `https://generativelanguage.googleapis.com/v1/models/${modelName}:generateContent?key=${apiKey}`;
+      // Try v1beta API (standard for Gemini)
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
       
       const response = await axios.post(url, {
         contents: [{
@@ -1097,6 +1097,44 @@ Provide JSON:
   }
 });
 
+// List available models endpoint
+app.get('/api/ai/list-models', async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'GEMINI_API_KEY not set in Railway environment variables'
+      });
+    }
+
+    // List available models
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+    const response = await axios.get(url);
+    
+    const models = response.data.models || [];
+    const availableModels = models
+      .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+      .map(m => ({
+        name: m.name,
+        displayName: m.displayName,
+        description: m.description
+      }));
+
+    res.status(200).json({ 
+      success: true, 
+      models: availableModels,
+      total: availableModels.length
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.response?.data?.error?.message || error.message
+    });
+  }
+});
+
 // Diagnostic endpoint to test Gemini API
 app.get('/api/ai/test', async (req, res) => {
   try {
@@ -1110,6 +1148,18 @@ app.get('/api/ai/test', async (req, res) => {
       });
     }
 
+    // First, list available models
+    let availableModels = [];
+    try {
+      const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+      const listResponse = await axios.get(listUrl);
+      availableModels = (listResponse.data.models || [])
+        .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+        .map(m => m.name.replace('models/', ''));
+    } catch (e) {
+      console.log('Could not list models:', e.message);
+    }
+
     // Test with a simple prompt
     const testPrompt = 'Say "Hello" in one word.';
     const testResult = await callGeminiAPI(testPrompt, { temperature: 0.7 });
@@ -1120,6 +1170,7 @@ app.get('/api/ai/test', async (req, res) => {
       modelUsed: testResult.modelName,
       testResponse: testResult.text,
       apiKeySet: true,
+      availableModels: availableModels,
       apiKeyPreview: apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 4)
     });
   } catch (error) {
@@ -1127,7 +1178,7 @@ app.get('/api/ai/test', async (req, res) => {
       success: false, 
       error: error.message,
       apiKeySet: !!process.env.GEMINI_API_KEY,
-      help: 'Check Railway logs for detailed error messages'
+      help: 'Check Railway logs for detailed error messages. Try /api/ai/list-models to see available models.'
     });
   }
 });
