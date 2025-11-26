@@ -14,7 +14,6 @@ const { OAuth2Client } = require('google-auth-library');
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
@@ -171,8 +170,7 @@ const transactionSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now },
   invoice_id: { type: String },
   plan_type: { type: String },
-  stripe_payment_intent_id: { type: String },
-  stripe_customer_id: { type: String }
+  payment_method: { type: String, default: 'simulation' }
 });
 
 const User = mongoose.model('User', userSchema);
@@ -762,153 +760,54 @@ app.get('/api/user/:userId/transactions', async (req, res) => {
   }
 });
 
-// --- STRIPE PAYMENT ---
-// Create Stripe Checkout Session
-app.post('/api/payment/create-session', async (req, res) => {
+// --- FREE SIMULATION PAYMENT ---
+// Process payment (simulation - no real payment processor needed)
+app.post('/api/payment/process', async (req, res) => {
   const { userId, amount } = req.body;
   
   try {
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({ success: false, message: 'Stripe not configured' });
-    }
-
     const user = await User.findOne({ id: userId });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Create or get Stripe customer
-    let customerId = user.stripe_customer_id;
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user.email,
-        name: user.name,
-        metadata: { userId: user.id }
-      });
-      customerId = customer.id;
-      await User.findOneAndUpdate({ id: userId }, { stripe_customer_id: customerId });
-    }
-
-    // Create checkout session
-    const session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: {
-            name: 'MinihaAI Pro Plan',
-            description: 'Unlimited humanizations and advanced features'
-          },
-          unit_amount: Math.round(parseFloat(amount.replace('$', '')) * 100) // Convert to cents
-        },
-        quantity: 1
-      }],
-      mode: 'payment',
-      success_url: `${process.env.FRONTEND_URL || 'https://minihaai.netlify.app'}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || 'https://minihaai.netlify.app'}/pricing`,
-      metadata: { userId }
-    });
-
-    res.status(200).json({ 
-      success: true, 
-      sessionId: session.id,
-      url: session.url 
-    });
-  } catch (error) {
-    console.error("Stripe Session Error:", error);
-    res.status(500).json({ success: false, message: "Payment session creation failed" });
-  }
-});
-
-// Stripe webhook handler (for production)
-app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const userId = session.metadata.userId;
+    // Simulate payment processing delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // Update user to premium
     await User.findOneAndUpdate({ id: userId }, { is_premium: true });
 
     // Record transaction
+    const transactionId = uuidv4();
     const transaction = new Transaction({
-      id: uuidv4(),
+      id: transactionId,
       user_id: userId,
-      amount: `$${(session.amount_total / 100).toFixed(2)}`,
+      amount: amount || '$9.99',
       status: 'Paid',
       date: new Date(),
-      invoice_id: `#INV-${session.id.substring(0, 8)}`,
+      invoice_id: `#INV-${transactionId.substring(0, 8).toUpperCase()}`,
       plan_type: 'Pro Plan',
-      stripe_payment_intent_id: session.payment_intent,
-      stripe_customer_id: session.customer
+      payment_method: 'simulation'
     });
     
     await transaction.save();
-    console.log('✅ Payment processed for user:', userId);
-  }
-
-  res.json({ received: true });
-});
-
-// Verify payment and upgrade user (for frontend callback)
-app.post('/api/payment/verify', async (req, res) => {
-  const { sessionId } = req.body;
-  
-  try {
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
     
-    if (session.payment_status === 'paid') {
-      const userId = session.metadata.userId;
-      
-      // Update user to premium
-      await User.findOneAndUpdate({ id: userId }, { is_premium: true });
-      
-      // Check if transaction already exists
-      let transaction = await Transaction.findOne({ stripe_payment_intent_id: session.payment_intent });
-      
-      if (!transaction) {
-        transaction = new Transaction({
-          id: uuidv4(),
-          user_id: userId,
-          amount: `$${(session.amount_total / 100).toFixed(2)}`,
-          status: 'Paid',
-          date: new Date(),
-          invoice_id: `#INV-${session.id.substring(0, 8)}`,
-          plan_type: 'Pro Plan',
-          stripe_payment_intent_id: session.payment_intent,
-          stripe_customer_id: session.customer
-        });
-        await transaction.save();
-      }
+    const updatedUser = await User.findOne({ id: userId });
 
-      const user = await User.findOne({ id: userId });
-      
-      res.status(200).json({ 
-        success: true, 
-        message: 'Payment successful!',
-        user: {
-          id: user.id,
-          isPremium: user.is_premium
-        },
-        transaction
-      });
-    } else {
-      res.status(400).json({ success: false, message: 'Payment not completed' });
-    }
+    console.log('✅ Payment processed (simulation) for user:', userId);
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Payment successful!',
+      user: {
+        id: updatedUser.id,
+        isPremium: updatedUser.is_premium
+      },
+      transaction
+    });
   } catch (error) {
-    console.error("Payment Verification Error:", error);
-    res.status(500).json({ success: false, message: "Payment verification failed" });
+    console.error("Payment Processing Error:", error);
+    res.status(500).json({ success: false, message: "Payment processing failed" });
   }
 });
 
