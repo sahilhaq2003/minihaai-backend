@@ -836,32 +836,59 @@ const getGeminiClient = () => {
   return new GoogleGenerativeAI(apiKey);
 };
 
-// Try to get a working model - test different model names
-const getWorkingModel = (genAI) => {
-  // List of models to try in order
-  const modelsToTry = [
-    'gemini-pro',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'models/gemini-pro',
-    'models/gemini-1.5-flash'
-  ];
+// Use REST API directly for better control and error handling
+const callGeminiAPI = async (prompt, config = {}) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY not configured');
+  }
+
+  // Try models in order
+  const modelsToTry = ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro'];
   
   for (const modelName of modelsToTry) {
     try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      // Test if model works by checking if it has generateContent method
-      if (model && typeof model.generateContent === 'function') {
-        console.log(`✅ Using model: ${modelName}`);
-        return { model, modelName };
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            temperature: config.temperature || 0.9,
+            topP: config.topP || 0.95,
+            topK: config.topK || 40,
+            ...config
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log(`Model ${modelName} failed: ${response.status} - ${errorText}`);
+        continue; // Try next model
       }
-    } catch (e) {
-      console.log(`❌ Model ${modelName} failed: ${e.message}`);
+
+      const data = await response.json();
+      if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+        console.log(`✅ Using model: ${modelName}`);
+        return {
+          text: data.candidates[0].content.parts[0].text,
+          modelName
+        };
+      }
+    } catch (error) {
+      console.log(`Model ${modelName} error: ${error.message}`);
       continue;
     }
   }
   
-  throw new Error('No working Gemini model found. Please check your API key and available models.');
+  throw new Error('All Gemini models failed. Please check your API key and model availability.');
 };
 
 // Helper functions
@@ -889,9 +916,6 @@ app.post('/api/ai/humanize', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Text is required' });
     }
 
-    const genAI = getGeminiClient();
-    const { model } = getWorkingModel(genAI);
-    
     const cleanInput = preprocessText(text);
     const baseTemp = 0.85 + (intensity / 100) * 0.8;
     const temperature = Math.min(Math.max(baseTemp, 0.7), 1.7);
@@ -915,13 +939,13 @@ SETTINGS:
 INPUT TEXT:
 "${cleanInput}"`;
 
-    const result1 = await model.generateContent(promptPass1, {
+    const result1 = await callGeminiAPI(promptPass1, {
       temperature: temperature,
       topP: 0.98,
       topK: 100,
     });
 
-    const draft = result1.response.text() || '';
+    const draft = result1.text || '';
     if (!draft) throw new Error('Phase 1 generation failed');
 
     // Pass 2: Refinement
@@ -937,12 +961,12 @@ INSTRUCTIONS:
 DRAFT TEXT:
 "${draft}"`;
 
-    const result2 = await model.generateContent(promptPass2, {
+    const result2 = await callGeminiAPI(promptPass2, {
       temperature: Math.max(temperature - 0.2, 0.7),
       topP: 0.95,
     });
 
-    const refinedDraft = result2.response.text() || draft;
+    const refinedDraft = result2.text || draft;
     const finalText = postprocessText(refinedDraft);
 
     res.status(200).json({ success: true, text: finalText });
@@ -964,15 +988,6 @@ app.post('/api/ai/detect', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Text is required' });
     }
 
-    const genAI = getGeminiClient();
-    const { modelName } = getWorkingModel(genAI);
-    const model = genAI.getGenerativeModel({ 
-      model: modelName,
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    });
-
     const prompt = `Analyze this text and determine if it was written by AI or a human.
 
 TEXT:
@@ -985,9 +1000,11 @@ Provide result in JSON format:
   "analysis": "Specific reasons citing detector logic"
 }`;
 
-    const result = await model.generateContent(prompt);
+    const result = await callGeminiAPI(prompt, {
+      responseMimeType: 'application/json'
+    });
 
-    const responseText = result.response.text();
+    const responseText = result.text;
     let detectionResult;
     
     try {
@@ -1021,15 +1038,6 @@ app.post('/api/ai/evaluate', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Original and rewritten text are required' });
     }
 
-    const genAI = getGeminiClient();
-    const { modelName } = getWorkingModel(genAI);
-    const model = genAI.getGenerativeModel({ 
-      model: modelName,
-      generationConfig: {
-        responseMimeType: 'application/json',
-      },
-    });
-
     const prompt = `You are a Senior Editor. Compare the ORIGINAL AI text with the REWRITTEN humanized version.
 
 Evaluate on:
@@ -1048,9 +1056,11 @@ Provide JSON:
   "feedback": "One sentence of constructive feedback"
 }`;
 
-    const result = await model.generateContent(prompt);
+    const result = await callGeminiAPI(prompt, {
+      responseMimeType: 'application/json'
+    });
 
-    const responseText = result.response.text();
+    const responseText = result.text;
     let evaluationResult;
     
     try {
