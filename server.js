@@ -49,14 +49,23 @@ console.log('  PORT:', PORT);
 
 // Connect to MongoDB with retry logic
 async function connectMongoDB() {
+  // Close existing connection if any
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.connection.close();
+  }
+  
   try {
     console.log('🔄 Attempting to connect to MongoDB...');
+    console.log('  Timeout: 15 seconds');
     
+    // Use shorter timeout to fail faster and show errors
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 30000,
-      socketTimeoutMS: 45000,
-      connectTimeoutMS: 30000,
+      serverSelectionTimeoutMS: 15000, // Reduced from 30000
+      socketTimeoutMS: 30000,
+      connectTimeoutMS: 15000,
       maxPoolSize: 10,
+      retryWrites: true,
+      w: 'majority'
     });
     
     console.log('✅ Connected to MongoDB Atlas');
@@ -84,22 +93,54 @@ async function connectMongoDB() {
     console.error('  Code:', err.code);
     console.error('  Name:', err.name);
     
-    if (err.message.includes('authentication failed')) {
-      console.error('  ⚠️  Check your MongoDB username and password');
+    // More specific error messages
+    if (err.message.includes('authentication failed') || err.message.includes('bad auth')) {
+      console.error('  ⚠️  AUTHENTICATION FAILED');
+      console.error('     → Check username and password in MongoDB Atlas');
+      console.error('     → Verify Database Access user: sahilhaq2003');
     } else if (err.message.includes('ENOTFOUND') || err.message.includes('getaddrinfo')) {
-      console.error('  ⚠️  Check your MongoDB cluster URL');
-    } else if (err.message.includes('timeout')) {
-      console.error('  ⚠️  Connection timeout - check network access in MongoDB Atlas');
+      console.error('  ⚠️  DNS/URL ERROR');
+      console.error('     → Check MongoDB cluster URL is correct');
+      console.error('     → Verify cluster0.buir1zc.mongodb.net is accessible');
+    } else if (err.message.includes('timeout') || err.message.includes('ETIMEDOUT')) {
+      console.error('  ⚠️  CONNECTION TIMEOUT');
+      console.error('     → Check Network Access in MongoDB Atlas');
+      console.error('     → Add IP: 0.0.0.0/0 (Allow from anywhere)');
+      console.error('     → Railway IPs may be blocked');
+    } else if (err.message.includes('MongoServerError')) {
+      console.error('  ⚠️  MONGODB SERVER ERROR');
+      console.error('     → Check MongoDB Atlas cluster status');
+    } else {
+      console.error('  ⚠️  UNKNOWN ERROR');
+      console.error('     → Full error:', JSON.stringify(err, null, 2));
     }
     
-    // Retry after 5 seconds
-    console.log('🔄 Retrying connection in 5 seconds...');
-    setTimeout(connectMongoDB, 5000);
+    // Retry after 10 seconds (longer delay to avoid spam)
+    console.log('🔄 Retrying connection in 10 seconds...');
+    setTimeout(connectMongoDB, 10000);
   }
 }
 
 // Start MongoDB connection
 connectMongoDB();
+
+// Monitor connection state every 10 seconds
+setInterval(() => {
+  const state = mongoose.connection.readyState;
+  const states = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  
+  if (state !== 1) {
+    console.log(`⏳ MongoDB Status: ${states[state]} (${state})`);
+    
+    if (state === 2) {
+      console.log('   → Connection attempt in progress...');
+      console.log('   → If stuck here, check:');
+      console.log('      1. MongoDB Atlas Network Access (allow 0.0.0.0/0)');
+      console.log('      2. MongoDB credentials in Railway variables');
+      console.log('      3. Railway logs for detailed errors');
+    }
+  }
+}, 10000); // Every 10 seconds
 
 // --- MONGOOSE SCHEMAS ---
 const userSchema = new mongoose.Schema({
@@ -171,11 +212,54 @@ app.get('/api/health', (req, res) => {
     3: 'disconnecting'
   };
   
+  const isHealthy = dbState === 1;
+  
   res.json({ 
-    status: dbState === 1 ? 'healthy' : 'unhealthy',
+    status: isHealthy ? 'healthy' : 'unhealthy',
     database: states[dbState] || 'unknown',
-    readyState: dbState
+    readyState: dbState,
+    message: isHealthy 
+      ? 'MongoDB connected successfully' 
+      : `MongoDB is ${states[dbState]}. Check Railway logs for connection errors.`
   });
+});
+
+// Diagnostic endpoint
+app.get('/api/diagnose', async (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const states = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  
+  const diagnostics = {
+    mongodb: {
+      state: states[dbState] || 'unknown',
+      readyState: dbState,
+      host: mongoose.connection.host || 'N/A',
+      name: mongoose.connection.name || 'N/A',
+      hasEnvVar: !!process.env.MONGODB_URI
+    },
+    environment: {
+      nodeEnv: process.env.NODE_ENV || 'not set',
+      port: PORT,
+      hasGoogleClientId: CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE'
+    }
+  };
+  
+  // Try a simple query if connected
+  if (dbState === 1) {
+    try {
+      await mongoose.connection.db.admin().ping();
+      diagnostics.mongodb.ping = 'success';
+    } catch (err) {
+      diagnostics.mongodb.ping = `failed: ${err.message}`;
+    }
+  }
+  
+  res.json(diagnostics);
 });
 
 // --- GOOGLE AUTH ---
