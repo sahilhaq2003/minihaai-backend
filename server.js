@@ -21,24 +21,51 @@ const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID_HERE';
 
 // --- MONGODB CONNECTION ---
 // Use environment variable or fallback (password is URL-encoded: @ = %40)
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://sahilhaq2003:Sahil%402003Haq@cluster0.buir1zc.mongodb.net/minihaai?retryWrites=true&w=majority';
+let MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://sahilhaq2003:Sahil%402003Haq@cluster0.buir1zc.mongodb.net/minihaai?retryWrites=true&w=majority';
+
+// Fix: If Railway decoded %40 to @, re-encode it
+if (MONGODB_URI.includes('@') && !MONGODB_URI.includes('%40')) {
+  // Check if password contains @ that should be %40
+  const uriMatch = MONGODB_URI.match(/mongodb\+srv:\/\/([^:]+):([^@]+)@/);
+  if (uriMatch && uriMatch[2].includes('@')) {
+    const password = uriMatch[2].replace(/@/g, '%40');
+    MONGODB_URI = MONGODB_URI.replace(/mongodb\+srv:\/\/[^:]+:[^@]+@/, `mongodb+srv://${uriMatch[1]}:${password}@`);
+    console.log('⚠️  Fixed MongoDB URI encoding');
+  }
+}
 
 console.log('🔧 Environment Check:');
-console.log('  MONGODB_URI:', MONGODB_URI ? 'Set' : 'Missing');
+console.log('  MONGODB_URI:', MONGODB_URI ? 'Set (hidden for security)' : 'Missing');
 console.log('  GOOGLE_CLIENT_ID:', CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE' ? 'Set' : 'Missing');
 console.log('  PORT:', PORT);
 
+// Connect to MongoDB
 mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 10000,
   socketTimeoutMS: 45000,
+  connectTimeoutMS: 10000,
 })
   .then(() => {
     console.log('✅ Connected to MongoDB Atlas');
     console.log('Database:', mongoose.connection.name);
+    console.log('Ready State:', mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected');
   })
   .catch(err => {
-    console.error('❌ MongoDB connection error:', err.message);
-    console.error('Full error:', err);
+    console.error('❌ MongoDB connection error:');
+    console.error('  Message:', err.message);
+    console.error('  Code:', err.code);
+    console.error('  Full error:', err);
+    
+    // Retry connection after 5 seconds
+    setTimeout(() => {
+      console.log('🔄 Retrying MongoDB connection...');
+      mongoose.connect(MONGODB_URI, {
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+      }).catch(retryErr => {
+        console.error('❌ Retry failed:', retryErr.message);
+      });
+    }, 5000);
   });
 
 // --- MONGOOSE SCHEMAS ---
@@ -103,9 +130,18 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const states = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  
   res.json({ 
-    status: 'healthy', 
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' 
+    status: dbState === 1 ? 'healthy' : 'unhealthy',
+    database: states[dbState] || 'unknown',
+    readyState: dbState
   });
 });
 
