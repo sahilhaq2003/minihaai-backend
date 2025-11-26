@@ -634,14 +634,23 @@ app.post('/api/auth/resend-verification', async (req, res) => {
 });
 
 // --- PASSWORD RESET ---
-// Request password reset
+// Request password reset - Available for ANY user (no authentication required)
 app.post('/api/auth/forgot-password', async (req, res) => {
   const { email } = req.body;
   
   try {
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    // Find user by email - works for ANY registered user
     const user = await User.findOne({ email });
     
     // Don't reveal if user exists (security best practice)
+    // Always return success message to prevent email enumeration
     if (!user) {
       return res.status(200).json({ 
         success: true, 
@@ -689,7 +698,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
-// Reset password with token
+// Reset password with token - Available for ANY user with valid token
 app.post('/api/auth/reset-password', async (req, res) => {
   const { token, email, newPassword } = req.body;
   
@@ -708,6 +717,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
       });
     }
 
+    // Find user by email and valid token - works for ANY user
     const user = await User.findOne({ 
       email,
       reset_password_token: token,
