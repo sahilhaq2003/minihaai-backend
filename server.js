@@ -20,11 +20,26 @@ const PORT = process.env.PORT || 3001;
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID_HERE';
 
 // --- MONGODB CONNECTION ---
+// Use environment variable or fallback (password is URL-encoded: @ = %40)
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://sahilhaq2003:Sahil%402003Haq@cluster0.buir1zc.mongodb.net/minihaai?retryWrites=true&w=majority';
 
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB Atlas'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+console.log('🔧 Environment Check:');
+console.log('  MONGODB_URI:', MONGODB_URI ? 'Set' : 'Missing');
+console.log('  GOOGLE_CLIENT_ID:', CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE' ? 'Set' : 'Missing');
+console.log('  PORT:', PORT);
+
+mongoose.connect(MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+})
+  .then(() => {
+    console.log('✅ Connected to MongoDB Atlas');
+    console.log('Database:', mongoose.connection.name);
+  })
+  .catch(err => {
+    console.error('❌ MongoDB connection error:', err.message);
+    console.error('Full error:', err);
+  });
 
 // --- MONGOOSE SCHEMAS ---
 const userSchema = new mongoose.Schema({
@@ -185,7 +200,20 @@ app.post('/api/auth/signup', async (req, res) => {
   const { email, password } = req.body;
   console.log('📝 Signup attempt for:', email);
 
+  // Check MongoDB connection
+  if (mongoose.connection.readyState !== 1) {
+    console.error('❌ MongoDB not connected. State:', mongoose.connection.readyState);
+    return res.status(503).json({ 
+      success: false, 
+      message: 'Database connection unavailable. Please try again later.' 
+    });
+  }
+
   try {
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
+    }
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       console.log('❌ User already exists:', email);
@@ -199,7 +227,7 @@ app.post('/api/auth/signup', async (req, res) => {
       email,
       password: hashedPassword,
       name: email.split('@')[0],
-      picture: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`,
+      picture: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
       provider: 'email',
       is_premium: false,
       created_at: new Date()
@@ -219,8 +247,22 @@ app.post('/api/auth/signup', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Signup Error:", error);
-    res.status(500).json({ success: false, message: "Server error during signup" });
+    console.error("Signup Error Details:", {
+      message: error.message,
+      name: error.name,
+      stack: error.stack
+    });
+    
+    // More specific error messages
+    if (error.name === 'MongoServerError' && error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'User already exists' });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error during signup",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
