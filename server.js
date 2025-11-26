@@ -1240,6 +1240,56 @@ app.get('/api/user/:userId', async (req, res) => {
   }
 });
 
+// --- UPDATE USER PROFILE PHOTO ---
+app.put('/api/user/:userId/photo', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { photo } = req.body;
+
+    if (!photo) {
+      return res.status(400).json({ success: false, message: 'Photo data is required' });
+    }
+
+    // Validate base64 image format
+    if (!photo.startsWith('data:image/')) {
+      return res.status(400).json({ success: false, message: 'Invalid image format' });
+    }
+
+    // Check if base64 string is too large (max 500KB for compressed image)
+    const base64Size = (photo.length * 3) / 4;
+    if (base64Size > 500 * 1024) {
+      return res.status(400).json({ success: false, message: 'Image file is too large' });
+    }
+
+    const user = await User.findOne({ id: userId });
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Update user's picture field with base64 image
+    user.picture = photo;
+    await user.save();
+
+    console.log(`✅ Profile photo updated for user: ${user.email}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile photo updated successfully',
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatar: user.picture,
+        isPremium: user.is_premium
+      }
+    });
+  } catch (error) {
+    console.error("Update Photo Error:", error);
+    res.status(500).json({ success: false, message: "Error updating profile photo" });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
