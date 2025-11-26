@@ -862,7 +862,7 @@ app.post('/api/ai/humanize', async (req, res) => {
     }
 
     const genAI = getGeminiClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
     
     const cleanInput = preprocessText(text);
     const baseTemp = 0.85 + (intensity / 100) * 0.8;
@@ -944,7 +944,7 @@ app.post('/api/ai/detect', async (req, res) => {
 
     const genAI = getGeminiClient();
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
+      model: 'gemini-pro',
       generationConfig: {
         responseMimeType: 'application/json',
       },
@@ -1002,7 +1002,7 @@ app.post('/api/ai/evaluate', async (req, res) => {
 
     const genAI = getGeminiClient();
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
+      model: 'gemini-pro',
       generationConfig: {
         responseMimeType: 'application/json',
       },
