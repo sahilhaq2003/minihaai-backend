@@ -651,21 +651,134 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
     await user.save();
 
-    // In production, send OTP via SMS service (Twilio, AWS SNS, etc.)
-    // For now, we'll log it (in production, remove this and use actual SMS service)
-    console.log(`📱 OTP for ${email} (${mobileNumber}): ${otpCode}`);
-    console.log('⚠️  In production, send OTP via SMS service. OTP expires in 10 minutes.');
+    // Send OTP via SMS service (WORKS GLOBALLY - All Countries)
+    // Using Twilio Verify API (RECOMMENDED - Best for OTP verification)
+    // Fallback: AWS SNS or manual OTP storage
+    
+    let smsSent = false;
+    let smsError = null;
 
-    // TODO: Integrate SMS service here
-    // Example with Twilio:
-    // const twilio = require('twilio');
-    // const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-    // await client.messages.create({
-    //   body: `Your MinihaAI password reset OTP is: ${otpCode}. Valid for 10 minutes.`,
-    //   to: mobileNumber,
-    //   from: process.env.TWILIO_PHONE_NUMBER
-    // });
+    // Helper function to format international phone number
+    const formatInternationalNumber = (number) => {
+      // Remove all non-digit characters except +
+      let cleaned = number.replace(/[^\d+]/g, '');
+      
+      // If it doesn't start with +, we need to add country code
+      if (!cleaned.startsWith('+')) {
+        // Check if it starts with 00 (international format)
+        if (cleaned.startsWith('00')) {
+          cleaned = '+' + cleaned.substring(2);
+        } else {
+          // If no country code, return as is (will be validated)
+          return cleaned;
+        }
+      }
+      
+      return cleaned;
+    };
 
+    const formattedNumber = formatInternationalNumber(mobileNumber);
+
+    // Validate that number has country code for international support
+    if (!formattedNumber.startsWith('+')) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please include country code with your mobile number (e.g., +1234567890 for US, +919876543210 for India)' 
+      });
+    }
+
+    // Try Twilio Verify API first (BEST for OTP - works in all countries)
+    if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SERVICE_SID) {
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+        // Use Twilio Verify API to send OTP
+        await client.verify.v2
+          .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+          .verifications
+          .create({ to: formattedNumber, channel: 'sms' });
+        
+        // Store the verification SID for later verification
+        // Note: With Twilio Verify, we don't need to store OTP manually
+        // Twilio handles the OTP generation and verification
+        smsSent = true;
+        console.log(`✅ OTP sent via Twilio Verify to ${formattedNumber} (International)`);
+        
+        // Return success - Twilio will handle OTP verification
+        return res.status(200).json({ 
+          success: true, 
+          message: 'OTP has been sent to your mobile number. Please check your phone.',
+          useTwilioVerify: true // Flag to indicate we're using Twilio Verify
+        });
+      } catch (error) {
+        console.error('❌ Twilio Verify Error:', error.message);
+        smsError = error.message;
+      }
+    }
+
+    // Fallback: Try regular Twilio SMS (if Verify service not configured)
+    if (!smsSent && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+        await client.messages.create({
+          body: `Your MinihaAI password reset OTP is: ${otpCode}. Valid for 10 minutes.`,
+          to: formattedNumber,
+          from: process.env.TWILIO_PHONE_NUMBER
+        });
+        
+        smsSent = true;
+        console.log(`✅ OTP sent via Twilio SMS to ${formattedNumber} (International)`);
+      } catch (error) {
+        console.error('❌ Twilio SMS Error:', error.message);
+        smsError = error.message;
+      }
+    }
+
+    // Try AWS SNS if Twilio failed or not configured
+    if (!smsSent && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION) {
+      try {
+        const AWS = require('aws-sdk');
+        const sns = new AWS.SNS({
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          region: process.env.AWS_REGION || 'us-east-1'
+        });
+
+        const params = {
+          Message: `Your MinihaAI password reset OTP is: ${otpCode}. Valid for 10 minutes.`,
+          PhoneNumber: formattedNumber
+        };
+
+        await sns.publish(params).promise();
+        smsSent = true;
+        console.log(`✅ OTP sent via AWS SNS to ${formattedNumber} (International)`);
+      } catch (error) {
+        console.error('❌ AWS SNS Error:', error.message);
+        smsError = error.message;
+      }
+    }
+
+    // Fallback: Log OTP if no SMS service configured (development mode)
+    if (!smsSent) {
+      console.log(`📱 OTP for ${email} (${mobileNumber}): ${otpCode}`);
+      console.log('⚠️  No SMS service configured. OTP logged for development. OTP expires in 10 minutes.');
+      if (smsError) {
+        console.log('⚠️  SMS service error:', smsError);
+      }
+      
+      // Return success with OTP for development (manual verification will be used)
+      return res.status(200).json({ 
+        success: true, 
+        message: 'OTP has been sent to your mobile number. Please check your phone.',
+        // Remove this in production - only for development
+        ...(process.env.NODE_ENV === 'development' && { otpCode })
+      });
+    }
+
+    // If SMS was sent via non-Verify method, return success
     res.status(200).json({ 
       success: true, 
       message: 'OTP has been sent to your mobile number. Please check your phone.',
@@ -680,7 +793,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
 // Verify OTP
 app.post('/api/auth/verify-otp', async (req, res) => {
-  const { email, otpCode } = req.body;
+  const { email, otpCode, mobileNumber, useTwilioVerify } = req.body;
   
   try {
     if (!email || !otpCode) {
@@ -690,6 +803,71 @@ app.post('/api/auth/verify-otp', async (req, res) => {
       });
     }
 
+    // If using Twilio Verify API, verify with Twilio first
+    if (useTwilioVerify && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VERIFY_SERVICE_SID && mobileNumber) {
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+        // Format mobile number
+        let formattedNumber = mobileNumber.replace(/[^\d+]/g, '');
+        if (!formattedNumber.startsWith('+')) {
+          if (formattedNumber.startsWith('00')) {
+            formattedNumber = '+' + formattedNumber.substring(2);
+          } else {
+            formattedNumber = '+' + formattedNumber;
+          }
+        }
+
+        // Verify OTP with Twilio
+        const verificationCheck = await client.verify.v2
+          .services(process.env.TWILIO_VERIFY_SERVICE_SID)
+          .verificationChecks
+          .create({ to: formattedNumber, code: otpCode });
+
+        if (verificationCheck.status === 'approved') {
+          // Find user by email
+          const user = await User.findOne({ email });
+          
+          if (!user) {
+            return res.status(404).json({ 
+              success: false, 
+              message: 'User not found' 
+            });
+          }
+
+          // Generate reset token for password reset
+          const resetToken = crypto.randomBytes(32).toString('hex');
+          const resetTokenExpires = new Date();
+          resetTokenExpires.setHours(resetTokenExpires.getHours() + 1); // 1 hour expiry
+
+          user.reset_password_token = resetToken;
+          user.reset_password_expires = resetTokenExpires;
+          user.otp_code = undefined; // Clear OTP if exists
+          user.otp_expires = undefined;
+          await user.save();
+
+          return res.status(200).json({ 
+            success: true, 
+            message: 'OTP verified successfully',
+            resetToken: resetToken
+          });
+        } else {
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Invalid or expired OTP code' 
+          });
+        }
+      } catch (error) {
+        console.error('❌ Twilio Verify Check Error:', error.message);
+        return res.status(400).json({ 
+          success: false, 
+          message: error.message || 'Invalid or expired OTP code' 
+        });
+      }
+    }
+
+    // Fallback: Manual OTP verification (for non-Twilio Verify or fallback)
     const user = await User.findOne({ 
       email,
       otp_code: otpCode,
