@@ -1285,8 +1285,17 @@ const callGeminiAPI = async (prompt, config = {}) => {
   }
 
   // Get available models dynamically
-  const availableModels = await getAvailableModels(apiKey);
+  let availableModels = await getAvailableModels(apiKey);
   const errors = [];
+  
+  // OPTIMIZED: Prioritize faster models first (Flash is faster than Pro)
+  availableModels = availableModels.sort((a, b) => {
+    // Prioritize flash models for speed
+    if (a.includes('flash') && !b.includes('flash')) return -1;
+    if (!a.includes('flash') && b.includes('flash')) return 1;
+    // If same type, keep original order
+    return 0;
+  });
   
   for (const modelName of availableModels) {
     try {
@@ -1301,13 +1310,15 @@ const callGeminiAPI = async (prompt, config = {}) => {
           temperature: config.temperature || 0.9,
           topP: config.topP || 0.95,
           topK: config.topK || 40,
+          maxOutputTokens: config.maxOutputTokens || 8192, // Limit tokens for faster response
           ...(config.responseMimeType && { responseMimeType: config.responseMimeType }),
-          ...Object.fromEntries(Object.entries(config).filter(([k]) => k !== 'temperature' && k !== 'topP' && k !== 'topK' && k !== 'responseMimeType'))
+          ...Object.fromEntries(Object.entries(config).filter(([k]) => !['temperature', 'topP', 'topK', 'responseMimeType', 'maxOutputTokens'].includes(k)))
         }
       }, {
         headers: {
           'Content-Type': 'application/json',
-        }
+        },
+        timeout: 45000 // 45 second timeout (reduced from default for faster failure)
       });
 
       const data = response.data;
@@ -1549,7 +1560,9 @@ const getIntensityInstructions = (intensity) => {
   }
 };
 
-// Humanize text endpoint
+// Humanize text endpoint - OPTIMIZED 2-PASS VERSION (maintains quality, ~2x faster)
+// Pass 1: Deep humanization with anti-detection rules
+// Pass 2: Combined quality enhancement & final polish (merges previous passes 2, 3, 4)
 app.post('/api/ai/humanize', async (req, res) => {
   try {
     const { text, tone = 'Standard', vocabulary = 'Standard (College)', intensity = 50 } = req.body;
@@ -1714,127 +1727,10 @@ Rewrite this text following ALL rules above, especially the TONE, VOCABULARY, an
     const draft1 = result1.text || '';
     if (!draft1) throw new Error('Phase 1 generation failed');
 
-    // Pass 2: Pattern Breaking & Quality Enhancement
-    const promptPass2 = `You are a Human Writing Pattern Expert and Quality Editor. Your job is to break ANY remaining AI patterns while ENHANCING quality and naturalness. This text MUST be 100% AI-FREE.
+    // OPTIMIZED Pass 2: Combined Quality Enhancement & Final Polish (Merges Pass 2, 3, 4 into one efficient pass)
+    const promptPass2 = `You are a Master Humanization Editor. This text MUST be 100% AI-FREE and pass ALL detectors. Perform final quality enhancement and polish in ONE pass.
 
-${toneInstructions}
-
-${vocabInstructions}
-
-${intensityInstructions}
-
-CRITICAL TASKS FOR 100% AI-FREE OUTPUT:
-1. SENTENCE RHYTHM & FLOW: Vary sentence rhythm aggressively based on tone and intensity - some fast-paced, some slow and thoughtful. Create natural flow between sentences. NEVER have repetitive rhythm patterns.
-2. REPETITION & COHESION: Add word repetition (humans repeat words, AI avoids it). Use repetition for emphasis and cohesion. Repeat key words 2-3 times naturally.
-3. QUALITY IMPERFECTIONS (CRITICAL FOR AI DETECTION BYPASS): Add imperfections based on intensity level:
-   - Light intensity: 3-4 subtle imperfections
-   - Moderate intensity: 5-7 natural imperfections
-   - Maximum intensity: 7-10 more noticeable imperfections
-   - Types: slightly awkward phrases, sentences that could be clearer, word choices that are slightly off-tone, abrupt but natural transitions, sentences that meander slightly, occasional redundancy, slight contradictions, incomplete thoughts
-4. PERSONAL VOICE & ENGAGEMENT: Add personal touches based on tone (see tone instructions above for specific phrases). AI avoids personal touches - add them liberally.
-5. CONVERSATIONAL ELEMENTS: Add conversational phrases based on tone (casual/witty use more, academic uses fewer): "you know", "I mean", "sort of", "kind of", "like", "actually", "honestly"
-6. UNCERTAINTY & HONESTY (AI IS TOO CONFIDENT): Add uncertainty markers based on tone and intensity: "maybe", "perhaps", "might", "could be", "I think", "probably", "I guess", "I suppose", "I'm not sure", "it seems like", "I believe"
-7. FRAGMENTS & VARIETY: Ensure fragments based on intensity level (light: 5-7%, moderate: 8-12%, maximum: 12-18%) - but make them meaningful. AI rarely uses fragments.
-8. QUESTION VARIETY: Add rhetorical or genuine questions based on tone (witty uses more, academic uses fewer). AI underuses questions.
-9. COHERENCE (IMPERFECT = HUMAN): Ensure ideas flow logically but not too perfectly - humans sometimes jump around. Add slight disorganization.
-10. QUALITY CHECK: Make sure the writing is clear, engaging, and well-written despite the imperfections.
-11. TONE CONSISTENCY: Ensure the tone matches the specified tone throughout.
-12. VOCABULARY CONSISTENCY: Ensure vocabulary level matches the specified level throughout.
-13. BREAK AI PATTERNS: Look for any remaining AI patterns and break them:
-    - Remove any remaining perfect parallel structures
-    - Break any repetitive sentence patterns
-    - Add variation to any consistent structures
-    - Introduce slight inconsistencies that feel natural
-14. ADD HUMAN QUIRKS: Include natural human writing quirks:
-    - Self-corrections: "or rather", "I mean", "actually", "wait, no"
-    - Thinking out loud: "Let me think...", "Hmm...", "Well..."
-    - Personal asides: "(at least I think so)", "(or maybe not)", "(you know what I mean)"
-    - Emotional expressions: "Wow", "Oh", "Huh", "Hmm"
-15. VARIATION CHECK: Ensure NO two consecutive sentences are similar in:
-    - Length
-    - Structure
-    - Opening words
-    - Complexity
-    - Type (declarative, interrogative, etc.)
-
-DRAFT TEXT:
-"${draft1}"
-
-Rewrite to add these human imperfections and patterns while MAINTAINING HIGH QUALITY and following the TONE, VOCABULARY, and INTENSITY settings. This MUST be 100% AI-FREE. Make it feel authentically human-written in the specified style - like a skilled writer, not a robot. Add more human quirks, imperfections, and natural variation.`;
-
-    const result2 = await callGeminiAPI(promptPass2, {
-      temperature: Math.max(temperature - 0.05, 0.85), // Keep higher for variation
-      topP: 0.995, // Higher for more variation
-      topK: 145, // Higher for more word variety
-    });
-
-    const draft2 = result2.text || draft1;
-    if (!draft2) throw new Error('Phase 2 generation failed');
-
-    // Pass 3: Quality Assurance & Final Humanization
-    const promptPass3 = `You are a Final Humanization Editor and Quality Assurance Expert. This text MUST pass ALL AI detectors with 0% detection rate. It must be 100% AI-FREE while maintaining HIGH QUALITY and following the specified settings.
-
-${toneInstructions}
-
-${vocabInstructions}
-
-${intensityInstructions}
-
-FINAL CHECKS & QUALITY ENHANCEMENTS FOR 100% AI-FREE OUTPUT:
-1. READ ALOUD TEST: Read each sentence aloud. If it sounds robotic, too perfect, or awkward, rewrite it naturally in the specified tone. If it sounds like AI, change it.
-2. SENTENCE VARIETY & FLOW (CRITICAL): Ensure NO two consecutive sentences have the same structure, length, or opening. Create natural flow based on intensity level. Vary everything aggressively.
-3. TRANSITION VARIETY: NO repeated transitions - vary them constantly. Use transitions appropriate for the specified tone. Never use the same transition twice in close proximity.
-4. WORD REPETITION (HUMANS REPEAT): Humans repeat words - ensure some key words appear 2-4 times naturally for cohesion. AI avoids repetition - add it.
-5. GRAMMAR IMPERFECTIONS (IMPERFECT = HUMAN): Keep intentional grammar quirks based on intensity (light: 2-3, moderate: 3-5, maximum: 5-8) - comma splices, fragments, run-ons that feel natural. AI avoids these.
-6. PUNCTUATION VARIETY: Use dashes, ellipses, parentheses, semicolons naturally - not just commas and periods. AI underuses dashes and ellipses.
-7. VOICE CONSISTENCY: Maintain a consistent but imperfect human voice in the specified tone throughout - like a skilled writer, not a robot.
-8. REMOVE ALL ROBOTIC PHRASES: Eliminate ANY remaining "In conclusion", "Furthermore", "Moreover", "Additionally", "It is worth noting", "It should be noted", etc. These are AI red flags.
-9. ADD HUMAN TOUCHES (CRITICAL): Include personal observations, questions, or asides that feel natural for the specified tone. Add more if needed.
-10. QUALITY & CLARITY: Ensure meaning is crystal clear and the writing is engaging and well-crafted.
-11. NATURAL IMPERFECTIONS: Keep natural imperfections based on intensity but ensure quality isn't sacrificed. More imperfections = more human.
-12. COHERENCE (SLIGHTLY IMPERFECT): Ideas should flow logically but with natural human variation - not too perfect. Add slight disorganization.
-13. ENGAGEMENT: Make the writing engaging and readable in the specified tone - humans write to communicate, not just inform.
-14. TONE VERIFICATION: Verify the tone matches the specified tone throughout (${tone}).
-15. VOCABULARY VERIFICATION: Verify the vocabulary matches the specified level throughout (${vocabulary}).
-16. AI PATTERN CHECK: Look for and eliminate ANY remaining AI patterns:
-    - Perfect parallel structures
-    - Repetitive sentence patterns
-    - Overly formal language
-    - Too-perfect organization
-    - Lack of personal touches
-    - No uncertainty markers
-    - No fragments or imperfections
-17. HUMAN PATTERN ENHANCEMENT: Ensure the text has:
-    - Personal touches and opinions
-    - Uncertainty markers
-    - Fragments and incomplete thoughts
-    - Natural imperfections
-    - Word repetition
-    - Slight disorganization
-    - Conversational elements
-    - Emotional expressions
-18. REMOVE ALL MARKDOWN: Remove any asterisks, underscores, backticks, or other markdown symbols.
-19. PLAIN TEXT ONLY: Output must be pure plain text with no formatting symbols whatsoever.
-20. FINAL AI-FREE VERIFICATION: This text must read like a real human wrote it. If ANY part sounds like AI, rewrite it. Add more human quirks, imperfections, and natural variation.
-
-TEXT TO FINALIZE:
-"${draft2}"
-
-Apply final humanization polish and quality check. This MUST be 100% AI-FREE and read like a skilled, real person wrote it in the specified tone and vocabulary level - high quality, natural, engaging, and completely undetectable. Add more human touches, imperfections, and natural variation if needed. Output ONLY plain text - no markdown, no asterisks, no formatting symbols.`;
-
-    const result3 = await callGeminiAPI(promptPass3, {
-      temperature: Math.max(temperature - 0.1, 0.8), // Keep higher for variation
-      topP: 0.99, // Higher for more variation
-      topK: 135, // Higher for more word variety
-    });
-
-    const draft3 = result3.text || draft2;
-    if (!draft3) throw new Error('Phase 3 generation failed');
-
-    // Pass 4: Final Quality Pass - Coherence & Naturalness Check
-    const promptPass4 = `You are a Final Quality Editor. Review this text one last time to ensure it's 100% AI-FREE, HIGH QUALITY, completely natural, undetectable, and matches the specified settings.
-
-SETTINGS TO VERIFY:
+SETTINGS:
 - Tone: ${tone}
 - Vocabulary: ${vocabulary}
 - Intensity: ${intensity}%
@@ -1843,53 +1739,37 @@ ${toneInstructions}
 
 ${vocabInstructions}
 
-FINAL QUALITY CHECKS FOR 100% AI-FREE OUTPUT:
-1. COHERENCE: Does the text make sense? Are ideas connected naturally (but not too perfectly)?
-2. FLOW: Does it read smoothly? Are transitions natural for the specified tone? Are they varied?
-3. QUALITY: Is the writing clear, engaging, and well-crafted?
-4. NATURALNESS (CRITICAL): Does it sound like a real human wrote it in the specified tone? If ANY part sounds like AI, fix it.
-5. MEANING: Is all original meaning preserved?
-6. NO AI TRACES (CRITICAL): Remove ANY remaining AI patterns or robotic phrasing. Look for:
-    - Perfect structures
-    - Repetitive patterns
-    - Overly formal language
-    - Lack of personal touches
-    - No uncertainty
-    - Too-perfect organization
-7. ENGAGEMENT: Is it interesting to read? Does it hold attention?
-8. TONE MATCH: Does it consistently match the specified tone (${tone})?
-9. VOCABULARY MATCH: Does it consistently match the specified vocabulary level (${vocabulary})?
-10. INTENSITY MATCH: Does the humanization intensity match the specified level (${intensity}%)?
-11. HUMAN PATTERNS VERIFICATION: Does the text have:
-    - Personal touches and opinions
-    - Uncertainty markers ("maybe", "perhaps", "I think")
-    - Fragments and incomplete thoughts
-    - Natural imperfections
-    - Word repetition
-    - Slight disorganization
-    - Conversational elements
-    - Emotional expressions
-    - Self-corrections or asides
-12. VARIATION VERIFICATION: Are sentences varied in:
-    - Length (no 3 consecutive similar lengths)
-    - Structure (no 2 consecutive similar structures)
-    - Opening words (no repetition)
-    - Complexity (mix of simple and complex)
-13. PLAIN TEXT: Ensure no markdown, asterisks, or formatting symbols remain
-14. FINAL AI-FREE TEST: Read the entire text. If it sounds like AI wrote it, add more human touches, imperfections, and natural variation. This MUST be 100% undetectable.
+${intensityInstructions}
 
-TEXT TO REVIEW:
-"${draft3}"
+CRITICAL FINAL CHECKS (ALL IN ONE PASS):
+1. SENTENCE VARIETY: Ensure NO two consecutive sentences share structure, length, or opening. Vary rhythm aggressively.
+2. HUMAN IMPERFECTIONS: Add natural imperfections based on intensity (light: 3-4, moderate: 5-7, max: 7-10) - awkward phrases, slight contradictions, incomplete thoughts.
+3. WORD REPETITION: Repeat key words 2-4 times naturally (humans repeat, AI doesn't).
+4. TRANSITION VARIETY: Vary transitions constantly. Use simple ones: "Plus", "But", "So" (NOT "Moreover", "Furthermore").
+5. PERSONAL TOUCHES: Add "maybe", "I think", "probably", "you know", "sort of" based on tone.
+6. HUMAN QUIRKS: Include self-corrections ("or rather", "I mean"), thinking out loud ("Hmm...", "Well..."), personal asides in parentheses.
+7. GRAMMAR IMPERFECTIONS: Keep intentional quirks (fragments, comma splices, run-ons) based on intensity.
+8. PUNCTUATION VARIETY: Use dashes, ellipses, parentheses naturally.
+9. REMOVE ROBOTIC PHRASES: Eliminate "In conclusion", "Furthermore", "Moreover", "Additionally" - these are AI red flags.
+10. COHERENCE: Ideas flow logically but imperfectly - add slight disorganization.
+11. TONE/VOCAB CONSISTENCY: Verify matches specified tone and vocabulary throughout.
+12. AI PATTERN CHECK: Break perfect structures, eliminate repetitive patterns, remove overly formal language.
+13. QUALITY & CLARITY: Ensure meaning is clear and writing is engaging despite imperfections.
+14. PLAIN TEXT ONLY: Remove ALL markdown, asterisks, formatting symbols.
+15. FINAL VERIFICATION: If ANY part sounds like AI, rewrite it with more human touches.
 
-Do a final quality pass. Make any final adjustments to ensure this is 100% AI-FREE, HIGH QUALITY, natural, human-written text that perfectly matches the specified tone, vocabulary, and intensity settings. If ANY part sounds like AI, rewrite it with more human touches. Output ONLY the final text - no explanations, no markdown, no formatting symbols. This text must pass ALL AI detectors with 0% detection rate.`;
+DRAFT TEXT:
+"${draft1}"
 
-    const result4 = await callGeminiAPI(promptPass4, {
-      temperature: Math.max(temperature - 0.15, 0.75), // Keep higher for variation
-      topP: 0.98, // Higher for more variation
-      topK: 125, // Higher for more word variety
+Apply final humanization polish. This MUST be 100% AI-FREE, HIGH QUALITY, and read like a skilled human wrote it in the specified tone and vocabulary. Output ONLY plain text - no markdown, no formatting symbols.`;
+
+    const result2 = await callGeminiAPI(promptPass2, {
+      temperature: Math.max(temperature - 0.05, 0.85), // Keep higher for variation
+      topP: 0.995, // Higher for more variation
+      topK: 145, // Higher for more word variety
     });
 
-    const finalDraft = result4.text || draft3;
+    const finalDraft = result2.text || draft1;
     const finalText = postprocessText(finalDraft);
 
     res.status(200).json({ success: true, text: finalText });
