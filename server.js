@@ -150,6 +150,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String },
   name: { type: String },
   picture: { type: String },
+  mobile_number: { type: String },
   provider: { type: String, default: 'email' },
   is_premium: { type: Boolean, default: false },
   premium_expires_at: { type: Date },
@@ -158,6 +159,8 @@ const userSchema = new mongoose.Schema({
   verification_token_expires: { type: Date },
   reset_password_token: { type: String },
   reset_password_expires: { type: Date },
+  otp_code: { type: String },
+  otp_expires: { type: Date },
   created_at: { type: Date, default: Date.now }
 });
 
@@ -603,91 +606,141 @@ app.post('/api/auth/resend-verification', async (req, res) => {
   }
 });
 
-// --- PASSWORD RESET ---
-// Request password reset - Available for ANY user (no authentication required)
+// --- PASSWORD RESET WITH MOBILE NUMBER & OTP ---
+// Request OTP via mobile number
 app.post('/api/auth/forgot-password', async (req, res) => {
-  const { email } = req.body;
+  const { mobileNumber, email } = req.body;
   
   try {
-    if (!email) {
+    if (!mobileNumber || !email) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Email is required' 
+        message: 'Mobile number and email are required' 
       });
     }
 
-    // Find user by email - works for ANY registered user
+    // Find user by email
     const user = await User.findOne({ email });
     
     // Don't reveal if user exists (security best practice)
-    // Always return success message to prevent email enumeration
     if (!user) {
       return res.status(200).json({ 
         success: true, 
-        message: 'If an account exists with this email, a password reset link has been sent.' 
+        message: 'If an account exists with this email and mobile number, an OTP has been sent.' 
       });
     }
 
-    // Generate reset token
+    // Verify mobile number matches (if user has mobile number stored)
+    if (user.mobile_number && user.mobile_number !== mobileNumber) {
+      return res.status(200).json({ 
+        success: true, 
+        message: 'If an account exists with this email and mobile number, an OTP has been sent.' 
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date();
+    otpExpires.setMinutes(otpExpires.getMinutes() + 10); // 10 minutes expiry
+
+    // Store OTP and update mobile number if not set
+    user.otp_code = otpCode;
+    user.otp_expires = otpExpires;
+    if (!user.mobile_number) {
+      user.mobile_number = mobileNumber;
+    }
+    await user.save();
+
+    // In production, send OTP via SMS service (Twilio, AWS SNS, etc.)
+    // For now, we'll log it (in production, remove this and use actual SMS service)
+    console.log(`📱 OTP for ${email} (${mobileNumber}): ${otpCode}`);
+    console.log('⚠️  In production, send OTP via SMS service. OTP expires in 10 minutes.');
+
+    // TODO: Integrate SMS service here
+    // Example with Twilio:
+    // const twilio = require('twilio');
+    // const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    // await client.messages.create({
+    //   body: `Your MinihaAI password reset OTP is: ${otpCode}. Valid for 10 minutes.`,
+    //   to: mobileNumber,
+    //   from: process.env.TWILIO_PHONE_NUMBER
+    // });
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'OTP has been sent to your mobile number. Please check your phone.',
+      // Remove this in production - only for development
+      ...(process.env.NODE_ENV === 'development' && { otpCode })
+    });
+  } catch (error) {
+    console.error("Send OTP Error:", error);
+    res.status(500).json({ success: false, message: "Failed to send OTP" });
+  }
+});
+
+// Verify OTP
+app.post('/api/auth/verify-otp', async (req, res) => {
+  const { email, otpCode } = req.body;
+  
+  try {
+    if (!email || !otpCode) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and OTP code are required' 
+      });
+    }
+
+    const user = await User.findOne({ 
+      email,
+      otp_code: otpCode,
+      otp_expires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid or expired OTP code' 
+      });
+    }
+
+    // Generate reset token for password reset
     const resetToken = crypto.randomBytes(32).toString('hex');
     const resetTokenExpires = new Date();
     resetTokenExpires.setHours(resetTokenExpires.getHours() + 1); // 1 hour expiry
 
     user.reset_password_token = resetToken;
     user.reset_password_expires = resetTokenExpires;
+    user.otp_code = undefined; // Clear OTP after verification
+    user.otp_expires = undefined;
     await user.save();
-
-    // Send reset email
-    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.vercel.app';
-    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-    
-    const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #e11d48;">Reset your password</h2>
-        <p>Hi ${user.name},</p>
-        <p>You requested to reset your password. Click the button below to reset it:</p>
-        <a href="${resetUrl}" style="display: inline-block; padding: 12px 24px; background-color: #e11d48; color: white; text-decoration: none; border-radius: 8px; margin: 20px 0;">Reset Password</a>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style="color: #666; word-break: break-all;">${resetUrl}</p>
-        <p>This link will expire in 1 hour.</p>
-        <p>If you didn't request this, please ignore this email and your password will remain unchanged.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #999; font-size: 12px;">© 2025 MinihaAI. All rights reserved.</p>
-      </div>
-    `;
-    
-    const emailResult = await sendEmail(email, 'Reset your MinihaAI password', emailHtml);
-    
-    // Check if email was sent successfully
-    if (!emailResult.success) {
-      console.error('❌ Failed to send password reset email:', emailResult.message || emailResult.error);
-      return res.status(500).json({ 
-        success: false, 
-        message: emailResult.message || 'Failed to send reset email. Please check email configuration.' 
-      });
-    }
-
-    console.log('✅ Password reset email sent to:', email);
 
     res.status(200).json({ 
       success: true, 
-      message: 'If an account exists with this email, a password reset link has been sent.' 
+      message: 'OTP verified successfully',
+      resetToken: resetToken
     });
   } catch (error) {
-    console.error("Forgot Password Error:", error);
-    res.status(500).json({ success: false, message: "Failed to send reset email" });
+    console.error("Verify OTP Error:", error);
+    res.status(500).json({ success: false, message: "OTP verification failed" });
   }
 });
 
 // Reset password with token - Available for ANY user with valid token
 app.post('/api/auth/reset-password', async (req, res) => {
-  const { token, email, newPassword } = req.body;
+  const { token, email, newPassword, confirmPassword } = req.body;
   
   try {
-    if (!token || !email || !newPassword) {
+    if (!token || !email || !newPassword || !confirmPassword) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Token, email, and new password are required' 
+        message: 'Token, email, new password, and confirm password are required' 
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Passwords do not match' 
       });
     }
 
