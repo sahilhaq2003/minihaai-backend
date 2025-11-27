@@ -175,8 +175,25 @@ const transactionSchema = new mongoose.Schema({
   payment_method: { type: String, default: 'simulation' }
 });
 
+const paymentRequestSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  user_id: { type: String, required: true },
+  user_email: { type: String, required: true },
+  user_name: { type: String },
+  amount: { type: String, required: true },
+  payment_id: { type: String, required: true },
+  payment_receipt: { type: String }, // Receipt screenshot/image URL or text
+  payment_method: { type: String, default: 'manual' },
+  status: { type: String, default: 'pending', enum: ['pending', 'approved', 'rejected'] },
+  admin_notes: { type: String },
+  submitted_at: { type: Date, default: Date.now },
+  reviewed_at: { type: Date },
+  reviewed_by: { type: String }
+});
+
 const User = mongoose.model('User', userSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
+const PaymentRequest = mongoose.model('PaymentRequest', paymentRequestSchema);
 
 const client = new OAuth2Client(CLIENT_ID);
 
@@ -813,7 +830,224 @@ app.get('/api/user/:userId/transactions', async (req, res) => {
   }
 });
 
-// --- FREE SIMULATION PAYMENT ---
+// --- MANUAL PAYMENT REQUEST ---
+// Submit payment request (user submits payment ID/receipt)
+app.post('/api/payment/submit', async (req, res) => {
+  const { userId, paymentId, paymentReceipt, amount } = req.body;
+  
+  try {
+    if (!userId || !paymentId) {
+      return res.status(400).json({ success: false, message: 'User ID and Payment ID are required' });
+    }
+
+    const user = await User.findOne({ id: userId });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Check if user already has a pending payment request
+    const existingRequest = await PaymentRequest.findOne({ 
+      user_id: userId, 
+      status: 'pending' 
+    });
+
+    if (existingRequest) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'You already have a pending payment request. Please wait for admin approval.' 
+      });
+    }
+
+    // Create payment request
+    const requestId = uuidv4();
+    const paymentRequest = new PaymentRequest({
+      id: requestId,
+      user_id: userId,
+      user_email: user.email,
+      user_name: user.name,
+      amount: amount || '$19.00',
+      payment_id: paymentId,
+      payment_receipt: paymentReceipt || '',
+      payment_method: 'manual',
+      status: 'pending',
+      submitted_at: new Date()
+    });
+
+    await paymentRequest.save();
+
+    console.log('✅ Payment request submitted:', requestId);
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Payment request submitted successfully! Admin will review and approve your Pro plan.',
+      requestId: requestId
+    });
+  } catch (error) {
+    console.error("Payment Request Error:", error);
+    res.status(500).json({ success: false, message: "Failed to submit payment request" });
+  }
+});
+
+// --- ADMIN: Get all pending payment requests ---
+app.get('/api/admin/payments', async (req, res) => {
+  const { adminPassword } = req.query;
+  
+  // Simple admin authentication (in production, use proper auth)
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+  
+  if (adminPassword !== ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const pendingPayments = await PaymentRequest.find({ status: 'pending' })
+      .sort({ submitted_at: -1 });
+    
+    const allPayments = await PaymentRequest.find()
+      .sort({ submitted_at: -1 })
+      .limit(100);
+
+    res.status(200).json({ 
+      success: true, 
+      pending: pendingPayments,
+      all: allPayments
+    });
+  } catch (error) {
+    console.error("Admin Payments Error:", error);
+    res.status(500).json({ success: false, message: "Error fetching payment requests" });
+  }
+});
+
+// --- ADMIN: Approve payment request ---
+app.post('/api/admin/payments/approve', async (req, res) => {
+  const { requestId, adminPassword, adminNotes } = req.body;
+  
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+  
+  if (adminPassword !== ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const paymentRequest = await PaymentRequest.findOne({ id: requestId });
+    if (!paymentRequest) {
+      return res.status(404).json({ success: false, message: 'Payment request not found' });
+    }
+
+    if (paymentRequest.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Payment request already processed' });
+    }
+
+    // Update payment request
+    paymentRequest.status = 'approved';
+    paymentRequest.reviewed_at = new Date();
+    paymentRequest.reviewed_by = 'admin';
+    paymentRequest.admin_notes = adminNotes || '';
+    await paymentRequest.save();
+
+    // Update user to premium
+    await User.findOneAndUpdate({ id: paymentRequest.user_id }, { is_premium: true });
+
+    // Create transaction record
+    const transactionId = uuidv4();
+    const transaction = new Transaction({
+      id: transactionId,
+      user_id: paymentRequest.user_id,
+      amount: paymentRequest.amount,
+      status: 'Paid',
+      date: new Date(),
+      invoice_id: `#INV-${transactionId.substring(0, 8).toUpperCase()}`,
+      plan_type: 'Pro Plan',
+      payment_method: 'manual'
+    });
+    await transaction.save();
+
+    console.log('✅ Payment approved:', requestId, 'User:', paymentRequest.user_id);
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Payment approved and user upgraded to Pro plan',
+      paymentRequest,
+      transaction
+    });
+  } catch (error) {
+    console.error("Approve Payment Error:", error);
+    res.status(500).json({ success: false, message: "Failed to approve payment" });
+  }
+});
+
+// --- ADMIN: Reject payment request ---
+app.post('/api/admin/payments/reject', async (req, res) => {
+  const { requestId, adminPassword, adminNotes } = req.body;
+  
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+  
+  if (adminPassword !== ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+
+  try {
+    const paymentRequest = await PaymentRequest.findOne({ id: requestId });
+    if (!paymentRequest) {
+      return res.status(404).json({ success: false, message: 'Payment request not found' });
+    }
+
+    if (paymentRequest.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Payment request already processed' });
+    }
+
+    paymentRequest.status = 'rejected';
+    paymentRequest.reviewed_at = new Date();
+    paymentRequest.reviewed_by = 'admin';
+    paymentRequest.admin_notes = adminNotes || '';
+    await paymentRequest.save();
+
+    console.log('❌ Payment rejected:', requestId);
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Payment request rejected',
+      paymentRequest
+    });
+  } catch (error) {
+    console.error("Reject Payment Error:", error);
+    res.status(500).json({ success: false, message: "Failed to reject payment" });
+  }
+});
+
+// --- Get user's payment request status ---
+app.get('/api/payment/status/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const paymentRequest = await PaymentRequest.findOne({ 
+      user_id: userId, 
+      status: 'pending' 
+    }).sort({ submitted_at: -1 });
+
+    if (!paymentRequest) {
+      return res.status(200).json({ 
+        success: true, 
+        hasPending: false 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      hasPending: true,
+      paymentRequest: {
+        id: paymentRequest.id,
+        status: paymentRequest.status,
+        submitted_at: paymentRequest.submitted_at,
+        amount: paymentRequest.amount
+      }
+    });
+  } catch (error) {
+    console.error("Payment Status Error:", error);
+    res.status(500).json({ success: false, message: "Error fetching payment status" });
+  }
+});
+
+// --- FREE SIMULATION PAYMENT (Keep for direct payment option) ---
 // Process payment (simulation - no real payment processor needed)
 app.post('/api/payment/process', async (req, res) => {
   const { userId, amount } = req.body;
