@@ -995,57 +995,157 @@ app.post('/api/ai/humanize', async (req, res) => {
     }
 
     const cleanInput = preprocessText(text);
-    const baseTemp = 0.85 + (intensity / 100) * 0.8;
-    const temperature = Math.min(Math.max(baseTemp, 0.7), 1.7);
+    const baseTemp = 0.9 + (intensity / 100) * 0.9;
+    const temperature = Math.min(Math.max(baseTemp, 0.8), 1.8);
 
-    // Pass 1: Humanization
-    const promptPass1 = `You are an Elite Anti-Detection Ghostwriter. 
-Your mission is to rewrite the text to bypass aggressive academic detectors: Turnitin, DrillBit, AntiPlag, Originality.ai, GPTZero, and Copyleaks.
+    // Pass 1: Deep Humanization - Break AI Patterns
+    const promptPass1 = `You are an Elite Anti-Detection Ghostwriter with expertise in bypassing ALL AI detection systems.
+Your mission: Rewrite this text to be 100% undetectable by Turnitin, GPTZero, Originality.ai, Copyleaks, ZeroGPT, Content at Scale, Writer.com, and all other detectors.
 
-THE "HUMAN" ALGORITHM:
-1. DEFEAT TURNITIN/DRILLBIT/ANTIPLAG: Break AI structure patterns. Bury main points in the middle. Change order of information.
-2. DEFEAT QUILLBOT/GRAMMARLY: Use simple, natural vocabulary. Allow sentence fragments. Use contractions.
-3. DEFEAT ORIGINALITY.AI: BANNED WORDS: "delve", "tapestry", "realm", "landscape", "underscores", "crucial", "leverage", "utilize", "orchestrate", "testament", "pivotal", "nuance". BANNED TRANSITIONS: "Moreover", "Furthermore", "In conclusion", "Additionally", "Conversely", "Notably", "Thus", "Hence". USE: "Plus", "On top of that", "Honestly", "So", "But", "Funny enough", "As for", "Besides".
-4. DEFEAT GPTZERO: Mix extremely short sentences (2-5 words) with very long ones (30+ words). Make unpredictable word choices.
-5. FORMATTING: NO bullet points. NO numbered lists. NO bold text. NO headings. Write in continuous, natural paragraphs.
+CRITICAL ANTI-DETECTION RULES:
+
+1. SENTENCE STRUCTURE VARIATION (CRITICAL):
+   - Mix sentence lengths: 30% short (2-8 words), 40% medium (12-20 words), 30% long (25-45 words)
+   - Vary sentence beginnings: Start with subjects, prepositions, conjunctions, adverbs randomly
+   - Use fragments strategically (5-10% of sentences should be fragments)
+   - Add occasional run-on sentences that feel natural
+   - Break parallel structures - humans don't write perfectly parallel
+
+2. BANNED AI WORDS (NEVER USE):
+   "delve", "tapestry", "realm", "landscape", "underscores", "crucial", "leverage", "utilize", "orchestrate", 
+   "testament", "pivotal", "nuance", "foster", "harness", "unveil", "embark", "navigate", "unlock", 
+   "catalyst", "cornerstone", "showcase", "facilitate", "endeavor", "paramount", "myriad", "plethora",
+   "inherent", "intrinsic", "comprehensive", "robust", "seamless", "streamline", "optimize", "synergy"
+
+3. BANNED AI TRANSITIONS (NEVER USE):
+   "Moreover", "Furthermore", "In conclusion", "Additionally", "Conversely", "Notably", "Thus", "Hence",
+   "Consequently", "Accordingly", "Subsequently", "Nevertheless", "Nonetheless", "In essence", "To summarize",
+   "In summary", "Ultimately", "In other words", "That is to say"
+
+4. USE HUMAN TRANSITIONS INSTEAD:
+   "Plus", "Also", "And", "But", "So", "Then", "Now", "Well", "Actually", "Honestly", "Really", "I mean",
+   "You know", "Like", "Kind of", "Sort of", "Pretty much", "Basically", "Anyway", "Oh", "Yeah", "Right"
+
+5. VOCABULARY & WORD CHOICE:
+   - Use simpler, everyday words 70% of the time
+   - Mix formal and casual language naturally
+   - Use contractions (don't, can't, won't, it's, that's) - 30-40% of applicable cases
+   - Add filler words occasionally: "like", "kind of", "sort of", "you know"
+   - Use "really", "very", "pretty", "quite" naturally (humans overuse these)
+   - Avoid perfect synonyms - repeat words occasionally (humans do this)
+
+6. GRAMMAR & PUNCTUATION:
+   - Allow intentional comma splices (5-8% of sentences)
+   - Use dashes (-) for emphasis, not just commas
+   - Add occasional ellipses (...) for natural pauses
+   - Use parentheses for asides (humans do this)
+   - Mix question marks and exclamation marks naturally
+   - Don't fix every grammar "error" - keep some for authenticity
+
+7. PARAGRAPH STRUCTURE:
+   - Vary paragraph lengths: 2-8 sentences per paragraph
+   - Some paragraphs should be 1-2 sentences (humans do this)
+   - Don't always start paragraphs with topic sentences
+   - Bury main points in the middle of paragraphs sometimes
+   - End paragraphs with questions or incomplete thoughts occasionally
+
+8. VOICE & TONE:
+   - Add personal touches: "I think", "It seems", "You might", "One could"
+   - Use rhetorical questions (2-3 per 500 words)
+   - Add conversational asides in parentheses
+   - Use "we" and "you" naturally (not just "one" or passive voice)
+   - Include occasional uncertainty: "maybe", "perhaps", "might", "could be"
+
+9. INFORMATION ORDER:
+   - Don't always present information in logical order
+   - Add tangents and return to main point
+   - Bury important info in the middle, not always at start/end
+   - Repeat ideas with different wording (humans do this)
+
+10. FORMATTING:
+    - NO bullet points, NO numbered lists
+    - NO bold, NO headings, NO subheadings
+    - Continuous natural paragraphs only
+    - Use line breaks sparingly
 
 SETTINGS:
 - Tone: ${tone}
-- Vocabulary: ${vocabulary}
-- Intensity: ${intensity}%
+- Vocabulary Level: ${vocabulary}
+- Humanization Intensity: ${intensity}%
 
-INPUT TEXT:
-"${cleanInput}"`;
+INPUT TEXT TO HUMANIZE:
+"${cleanInput}"
+
+Rewrite this text following ALL rules above. Make it sound like a real human wrote it, not AI.`;
 
     const result1 = await callGeminiAPI(promptPass1, {
       temperature: temperature,
-      topP: 0.98,
+      topP: 0.99,
+      topK: 120,
+    });
+
+    const draft1 = result1.text || '';
+    if (!draft1) throw new Error('Phase 1 generation failed');
+
+    // Pass 2: Pattern Breaking & Naturalization
+    const promptPass2 = `You are a Human Writing Pattern Expert. Your job is to break any remaining AI patterns in this text.
+
+CRITICAL TASKS:
+1. SENTENCE RHYTHM: Vary sentence rhythm - some fast-paced, some slow and thoughtful
+2. REPETITION: Add subtle word repetition (humans repeat words, AI avoids it)
+3. IMPERFECTIONS: Add 3-5 intentional "imperfections":
+   - One slightly awkward phrase
+   - One sentence that could be clearer (but isn't wrong)
+   - One word choice that's slightly informal in formal context
+   - One transition that's a bit abrupt
+4. PERSONAL VOICE: Add 2-3 personal touches: "I've noticed", "It's interesting that", "What's cool is"
+5. CONVERSATIONAL ELEMENTS: Add 1-2 conversational phrases: "you know", "I mean", "sort of"
+6. UNCERTAINTY MARKERS: Add "maybe", "perhaps", "might", "could be" where appropriate
+7. FRAGMENTS: Ensure 8-12% of sentences are fragments or incomplete thoughts
+8. QUESTION VARIETY: Add 1-2 rhetorical or genuine questions
+
+DRAFT TEXT:
+"${draft1}"
+
+Rewrite to add these human imperfections and patterns. Make it feel authentically human-written.`;
+
+    const result2 = await callGeminiAPI(promptPass2, {
+      temperature: Math.max(temperature - 0.15, 0.75),
+      topP: 0.97,
+      topK: 110,
+    });
+
+    const draft2 = result2.text || draft1;
+    if (!draft2) throw new Error('Phase 2 generation failed');
+
+    // Pass 3: Final Polish & Anti-Detection Refinement
+    const promptPass3 = `You are a Final Humanization Editor. This text must pass ALL AI detectors with 0% detection rate.
+
+FINAL CHECKS:
+1. READ ALOUD TEST: Read each sentence aloud. If it sounds robotic or too perfect, rewrite it more casually
+2. SENTENCE VARIETY: Ensure no two consecutive sentences have the same structure
+3. TRANSITION VARIETY: No repeated transitions - vary them constantly
+4. WORD REPETITION: Humans repeat words - ensure some key words appear 2-3 times naturally
+5. GRAMMAR IMPERFECTIONS: Keep 2-3 intentional grammar quirks (comma splices, fragments, run-ons)
+6. PUNCTUATION: Use dashes, ellipses, parentheses naturally - not just commas and periods
+7. VOICE CONSISTENCY: Maintain a consistent but imperfect human voice throughout
+8. REMOVE ROBOTIC PHRASES: Eliminate any remaining "In conclusion", "Furthermore", "Moreover", etc.
+9. ADD HUMAN TOUCHES: Include personal observations, questions, or asides
+10. FINAL POLISH: Ensure meaning is clear but writing feels naturally imperfect
+
+TEXT TO FINALIZE:
+"${draft2}"
+
+Apply final humanization polish. This must read like a real person wrote it, with all the natural imperfections humans have.`;
+
+    const result3 = await callGeminiAPI(promptPass3, {
+      temperature: Math.max(temperature - 0.3, 0.7),
+      topP: 0.95,
       topK: 100,
     });
 
-    const draft = result1.text || '';
-    if (!draft) throw new Error('Phase 1 generation failed');
-
-    // Pass 2: Refinement
-    const promptPass2 = `You are a "Humanizer" Editor. Make the text below undetectable by DrillBit, AntiPlag, and Turnitin.
-
-INSTRUCTIONS:
-1. Read Aloud Check: If a sentence sounds too "perfect", rewrite it to sound conversational.
-2. Hyphens: Ensure all dashes are standard hyphens (-), not em-dashes (—).
-3. Kill the Robot: Remove phrases like "In summary", "Ultimately". End naturally.
-4. Anti-Perfection: Do NOT fix "comma splices" or "fragments" if they add to the voice.
-5. Clarity: Ensure meaning is instantly easy to understand.
-
-DRAFT TEXT:
-"${draft}"`;
-
-    const result2 = await callGeminiAPI(promptPass2, {
-      temperature: Math.max(temperature - 0.2, 0.7),
-      topP: 0.95,
-    });
-
-    const refinedDraft = result2.text || draft;
-    const finalText = postprocessText(refinedDraft);
+    const finalDraft = result3.text || draft2;
+    const finalText = postprocessText(finalDraft);
 
     res.status(200).json({ success: true, text: finalText });
   } catch (error) {
