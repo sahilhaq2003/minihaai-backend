@@ -1016,171 +1016,508 @@ const postprocessText = (text) => {
   return result.trim();
 };
 
+// Helper functions for tone, vocabulary, and intensity settings
+const getToneInstructions = (tone) => {
+  const toneMap = {
+    'Standard': `TONE: Standard/Balanced
+- Write in a balanced, clear, and straightforward manner
+- Use a mix of formal and casual language naturally
+- Maintain professional clarity without being overly formal
+- Sound like an educated, thoughtful person writing naturally
+- Use contractions moderately (30-40%)
+- Include occasional personal touches: "I think", "It seems", "You might notice"
+- Keep it engaging but not overly casual or formal`,
+
+    'Casual': `TONE: Casual/Conversational
+- Write like you're talking to a friend - relaxed and natural
+- Use contractions frequently (60-70%): "don't", "can't", "won't", "it's", "that's", "we're"
+- Add conversational fillers naturally: "you know", "I mean", "like", "sort of", "kind of"
+- Use casual transitions: "Plus", "Also", "And", "But", "So", "Then", "Now", "Well", "Actually"
+- Include personal touches: "I think", "I've noticed", "You might", "Honestly", "Really"
+- Use "you" and "we" frequently - make it feel like a conversation
+- Add occasional uncertainty: "maybe", "perhaps", "might", "could be", "I guess", "probably"
+- Keep sentences shorter and more direct
+- Use exclamation marks occasionally for enthusiasm
+- Sound friendly and approachable, like a real person chatting`,
+
+    'Professional': `TONE: Professional/Business
+- Write in a polished, business-appropriate style
+- Use contractions sparingly (20-30%) - more formal but still natural
+- Maintain professional clarity and precision
+- Use "we" and "you" appropriately for business context
+- Include professional phrases: "It's important to note", "One consideration is", "A key point is"
+- Keep transitions professional but natural: "Additionally", "However", "Therefore", "In this case"
+- Avoid overly casual language but don't sound robotic
+- Use active voice for clarity and impact
+- Sound like a skilled professional writing naturally, not a corporate robot
+- Maintain authority while being approachable`,
+
+    'Academic': `TONE: Academic/Scholarly
+- Write in a scholarly, analytical style appropriate for academic work
+- Use contractions minimally (10-20%) - more formal structure
+- Employ academic vocabulary appropriately but naturally
+- Use "one" and passive voice more frequently (40-50% passive) for academic style
+- Include analytical phrases: "It can be observed that", "One might argue", "This suggests that", "It appears that"
+- Use transitions: "Furthermore", "However", "Consequently", "In contrast", "Similarly"
+- Maintain objectivity while showing critical thinking
+- Use longer, more complex sentences (but still vary them)
+- Sound like a thoughtful academic writing naturally, not a textbook
+- Balance formality with readability`,
+
+    'Witty': `TONE: Witty/Clever
+- Write with humor, cleverness, and personality
+- Use contractions frequently (50-60%) for a lively feel
+- Add witty observations and clever turns of phrase
+- Include rhetorical questions for effect (3-4 per 500 words)
+- Use unexpected word choices and playful language
+- Add subtle humor and irony where appropriate
+- Use dashes and parentheses for witty asides
+- Include conversational elements: "you know", "I mean", "sort of"
+- Make it engaging and entertaining while maintaining quality
+- Sound like a clever, witty person writing naturally
+- Use exclamation marks and question marks for emphasis`,
+
+    'Empathetic': `TONE: Empathetic/Understanding
+- Write with warmth, understanding, and emotional intelligence
+- Use contractions moderately (40-50%) for a warm, approachable feel
+- Include empathetic phrases: "I understand", "It's understandable that", "Many people feel", "You might be experiencing"
+- Use "you" frequently to connect with the reader
+- Add personal touches: "I've found", "In my experience", "What I've noticed"
+- Use softer language and understanding transitions: "And", "But", "So", "Also", "Plus"
+- Include questions that show understanding: "Have you ever noticed?", "Does this resonate?"
+- Sound caring and understanding, like someone who truly gets it
+- Use emotional language appropriately but authentically
+- Make it feel supportive and human`,
+
+    'Persuasive': `TONE: Persuasive/Convincing
+- Write to persuade and convince while remaining natural
+- Use contractions moderately (30-40%) for a balanced persuasive tone
+- Employ persuasive techniques naturally: rhetorical questions, strong statements, compelling examples
+- Use active voice for impact (80-90%)
+- Include persuasive phrases: "Consider this", "Think about it", "Here's the thing", "The key point is"
+- Use transitions that build argument: "And", "But", "So", "Plus", "Also", "Now", "Here's why"
+- Add personal conviction: "I believe", "I'm convinced", "It's clear that", "The evidence shows"
+- Use "you" to directly address the reader
+- Sound confident and convincing, like someone who truly believes what they're saying
+- Make compelling arguments while maintaining natural human voice
+- Use questions strategically to engage and persuade`
+  };
+  return toneMap[tone] || toneMap['Standard'];
+};
+
+const getVocabularyInstructions = (vocabulary) => {
+  const vocabMap = {
+    'Simple (High School)': `VOCABULARY: Simple/High School Level
+- Use everyday, accessible words that most people understand
+- Avoid complex or technical terms unless necessary (and explain them if used)
+- Use simple, direct language: "use" instead of "utilize", "help" instead of "facilitate", "show" instead of "demonstrate"
+- Keep sentences clear and straightforward
+- Use common words: "big" instead of "substantial", "good" instead of "beneficial", "bad" instead of "detrimental"
+- Explain complex ideas in simple terms
+- Use contractions frequently (50-60%) for naturalness
+- Sound like an intelligent person writing simply, not condescending`,
+
+    'Standard (College)': `VOCABULARY: Standard/College Level
+- Use a balanced mix of everyday and more sophisticated words
+- Employ appropriate vocabulary for educated readers
+- Mix simple and complex words naturally: "use" and "utilize" both, "help" and "facilitate" both
+- Use precise words when needed: "demonstrate" when appropriate, "show" when simpler works
+- Balance accessibility with sophistication
+- Use contractions moderately (30-40%)
+- Sound like a well-educated person writing naturally
+- Choose words that fit the context - not too simple, not too complex`,
+
+    'Advanced (PhD)': `VOCABULARY: Advanced/PhD Level
+- Use sophisticated, precise vocabulary appropriate for advanced readers
+- Employ technical and academic terms when appropriate
+- Use precise words: "utilize" when precise, "facilitate" when appropriate, "demonstrate" for clarity
+- Include nuanced vocabulary: "substantial" when precise, "beneficial" when appropriate, "detrimental" when needed
+- Use complex sentence structures naturally (but still vary them)
+- Use contractions sparingly (20-30%) for more formal tone
+- Sound like an expert writing naturally, not showing off
+- Balance sophistication with clarity - don't be unnecessarily complex`
+  };
+  return vocabMap[vocabulary] || vocabMap['Standard (College)'];
+};
+
+const getIntensityInstructions = (intensity) => {
+  const intensityLevel = parseInt(intensity) || 50;
+  
+  if (intensityLevel <= 30) {
+    return `HUMANIZATION INTENSITY: Light (${intensityLevel}%)
+- Apply subtle humanization - maintain more of the original structure
+- Add moderate sentence variation (20% short, 50% medium, 30% long)
+- Use fragments sparingly (3-5% of sentences)
+- Add minimal imperfections - keep it polished
+- Use contractions moderately
+- Keep transitions more standard but still natural
+- Maintain closer to original flow while adding human touches`;
+  } else if (intensityLevel <= 70) {
+    return `HUMANIZATION INTENSITY: Moderate (${intensityLevel}%)
+- Apply balanced humanization - natural variation
+- Mix sentence lengths: 30% short, 40% medium, 30% long
+- Use fragments strategically (5-10% of sentences)
+- Add moderate imperfections that feel natural
+- Use contractions appropriately (30-50%)
+- Vary transitions naturally
+- Create natural flow with good variation`;
+  } else {
+    return `HUMANIZATION INTENSITY: Maximum (${intensityLevel}%)
+- Apply aggressive humanization - maximum naturalness
+- Heavy sentence variation: 35% short, 30% medium, 35% long
+- Use fragments frequently (10-15% of sentences)
+- Add more imperfections and natural quirks
+- Use contractions frequently (50-70%)
+- Vary transitions extensively - no repetition
+- Create highly varied, natural flow
+- Maximum sentence structure variation
+- More personal touches and conversational elements
+- More uncertainty markers: "maybe", "perhaps", "might", "could be"
+- More natural imperfections and human quirks`;
+  }
+};
+
 // Humanize text endpoint
 app.post('/api/ai/humanize', async (req, res) => {
   try {
-    const { text, tone = 'Natural', vocabulary = 'Standard', intensity = 50 } = req.body;
+    const { text, tone = 'Standard', vocabulary = 'Standard (College)', intensity = 50 } = req.body;
 
     if (!text || !text.trim()) {
       return res.status(400).json({ success: false, message: 'Text is required' });
     }
 
     const cleanInput = preprocessText(text);
-    const baseTemp = 0.9 + (intensity / 100) * 0.9;
-    const temperature = Math.min(Math.max(baseTemp, 0.8), 1.8);
+    // Higher temperature for maximum human-like variation (100% AI-free)
+    const baseTemp = 1.0 + (intensity / 100) * 0.9;
+    const temperature = Math.min(Math.max(baseTemp, 0.9), 2.0);
 
-    // Pass 1: Deep Humanization - Break AI Patterns
+    // Get setting-specific instructions
+    const toneInstructions = getToneInstructions(tone);
+    const vocabInstructions = getVocabularyInstructions(vocabulary);
+    const intensityInstructions = getIntensityInstructions(intensity);
+
+    // Pass 1: Deep Humanization - Break AI Patterns & Create Natural Flow
     const promptPass1 = `You are an Elite Anti-Detection Ghostwriter with expertise in bypassing ALL AI detection systems.
-Your mission: Rewrite this text to be 100% undetectable by Turnitin, GPTZero, Originality.ai, Copyleaks, ZeroGPT, Content at Scale, Writer.com, and all other detectors.
+Your mission: Rewrite this text to be 100% UNDETECTABLE by Turnitin, GPTZero, Originality.ai, Copyleaks, ZeroGPT, Content at Scale, Writer.com, Sapling, Winston AI, Crossplag, and ALL other detectors.
 
-CRITICAL ANTI-DETECTION RULES:
+CRITICAL: The output must be 100% AI-FREE, HIGH QUALITY, natural, and completely human-written. This text must pass every AI detector with 0% detection rate. Maintain all meaning while making it completely undetectable.
 
-1. SENTENCE STRUCTURE VARIATION (CRITICAL):
-   - Mix sentence lengths: 30% short (2-8 words), 40% medium (12-20 words), 30% long (25-45 words)
-   - Vary sentence beginnings: Start with subjects, prepositions, conjunctions, adverbs randomly
-   - Use fragments strategically (5-10% of sentences should be fragments)
-   - Add occasional run-on sentences that feel natural
-   - Break parallel structures - humans don't write perfectly parallel
+${toneInstructions}
 
-2. BANNED AI WORDS (NEVER USE):
+${vocabInstructions}
+
+${intensityInstructions}
+
+CRITICAL ANTI-DETECTION RULES (100% AI-FREE REQUIREMENTS):
+
+1. SENTENCE STRUCTURE VARIATION (CRITICAL - AI DETECTORS LOOK FOR PATTERNS):
+   - Mix sentence lengths aggressively based on intensity level above
+   - NEVER have 3 consecutive sentences of similar length
+   - Vary sentence beginnings randomly: Start with subjects, prepositions, conjunctions, adverbs, questions, fragments
+   - Use fragments strategically based on intensity level (humans use fragments, AI rarely does)
+   - Add occasional run-on sentences that feel natural (AI avoids these)
+   - Break parallel structures completely - humans NEVER write perfectly parallel
+   - Vary sentence complexity: simple, compound, complex, compound-complex randomly
+   - Add occasional incomplete thoughts or trailing sentences
+   - Use one-word sentences occasionally for emphasis
+
+2. BANNED AI WORDS (NEVER USE - THESE ARE AI RED FLAGS):
    "delve", "tapestry", "realm", "landscape", "underscores", "crucial", "leverage", "utilize", "orchestrate", 
    "testament", "pivotal", "nuance", "foster", "harness", "unveil", "embark", "navigate", "unlock", 
    "catalyst", "cornerstone", "showcase", "facilitate", "endeavor", "paramount", "myriad", "plethora",
-   "inherent", "intrinsic", "comprehensive", "robust", "seamless", "streamline", "optimize", "synergy"
+   "inherent", "intrinsic", "comprehensive", "robust", "seamless", "streamline", "optimize", "synergy",
+   "delve into", "in the realm of", "it is worth noting", "it should be noted", "it is important to",
+   "in order to", "with regard to", "in terms of", "as a result of", "due to the fact that"
 
-3. BANNED AI TRANSITIONS (NEVER USE):
+3. BANNED AI TRANSITIONS (NEVER USE - INSTANT AI DETECTION):
    "Moreover", "Furthermore", "In conclusion", "Additionally", "Conversely", "Notably", "Thus", "Hence",
    "Consequently", "Accordingly", "Subsequently", "Nevertheless", "Nonetheless", "In essence", "To summarize",
-   "In summary", "Ultimately", "In other words", "That is to say"
+   "In summary", "Ultimately", "In other words", "That is to say", "To begin with", "First and foremost",
+   "Last but not least", "In the final analysis", "To put it simply", "In a nutshell"
 
-4. USE HUMAN TRANSITIONS INSTEAD:
+4. USE HUMAN TRANSITIONS INSTEAD (based on tone - these sound natural):
    "Plus", "Also", "And", "But", "So", "Then", "Now", "Well", "Actually", "Honestly", "Really", "I mean",
-   "You know", "Like", "Kind of", "Sort of", "Pretty much", "Basically", "Anyway", "Oh", "Yeah", "Right"
+   "You know", "Like", "Kind of", "Sort of", "Pretty much", "Basically", "Anyway", "Oh", "Yeah", "Right",
+   "See", "Look", "I guess", "I suppose", "Or", "Though", "Still", "Yet", "Even so", "At the same time"
 
-5. VOCABULARY & WORD CHOICE:
-   - Use simpler, everyday words 70% of the time
-   - Mix formal and casual language naturally
-   - Use contractions (don't, can't, won't, it's, that's) - 30-40% of applicable cases
-   - Add filler words occasionally: "like", "kind of", "sort of", "you know"
-   - Use "really", "very", "pretty", "quite" naturally (humans overuse these)
-   - Avoid perfect synonyms - repeat words occasionally (humans do this)
+5. VOCABULARY & WORD CHOICE (CRITICAL FOR AI DETECTION):
+   - Follow vocabulary level instructions above strictly
+   - Use contractions based on tone instructions (AI underuses contractions)
+   - Add filler words based on tone (casual tones use more) - AI avoids these
+   - Use "really", "very", "pretty", "quite", "sort of", "kind of" naturally (humans overuse these, AI doesn't)
+   - Avoid perfect synonyms - repeat words occasionally (humans do this, AI avoids it)
+   - Use specific, concrete words instead of vague abstract ones when possible
+   - Choose words that feel natural in context, not forced or overly formal
+   - Vary word choice - don't use the same word twice in close proximity unless intentional
+   - Use colloquialisms and informal expressions where appropriate
+   - Mix formal and informal language naturally (AI tends to be consistent)
+   - Use "thing", "stuff", "get", "go", "make" - simple words humans use frequently
 
-6. GRAMMAR & PUNCTUATION:
-   - Allow intentional comma splices (5-8% of sentences)
-   - Use dashes (-) for emphasis, not just commas
-   - Add occasional ellipses (...) for natural pauses
-   - Use parentheses for asides (humans do this)
+6. GRAMMAR & PUNCTUATION (IMPERFECTIONS = HUMAN):
+   - Allow intentional comma splices based on intensity (5-8% for moderate, 3-5% for light, 8-12% for maximum)
+   - Use dashes (-) for emphasis, not just commas (AI underuses dashes)
+   - Add occasional ellipses (...) for natural pauses (AI rarely uses these)
+   - Use parentheses for asides (humans do this, AI rarely does)
    - Mix question marks and exclamation marks naturally
    - Don't fix every grammar "error" - keep some for authenticity
+   - Use semicolons sparingly (humans rarely use them, AI overuses them)
+   - Add occasional typos-like patterns: "its" vs "it's" confusion (but be careful)
+   - Use sentence fragments that feel natural
 
-7. PARAGRAPH STRUCTURE:
-   - Vary paragraph lengths: 2-8 sentences per paragraph
-   - Some paragraphs should be 1-2 sentences (humans do this)
-   - Don't always start paragraphs with topic sentences
-   - Bury main points in the middle of paragraphs sometimes
+7. PARAGRAPH STRUCTURE (CRITICAL - AI DETECTORS ANALYZE STRUCTURE):
+   - Vary paragraph lengths dramatically: 1-10 sentences per paragraph (AI tends to be consistent)
+   - Some paragraphs should be 1-2 sentences (humans do this, AI rarely does)
+   - Some paragraphs should be longer (8-10 sentences) - AI tends to keep them medium
+   - Don't always start paragraphs with topic sentences (AI always does this)
+   - Bury main points in the middle of paragraphs sometimes (AI puts them at start/end)
    - End paragraphs with questions or incomplete thoughts occasionally
+   - Start some paragraphs mid-thought or with a continuation
+   - Mix short and long paragraphs randomly - no pattern
 
-8. VOICE & TONE:
-   - Add personal touches: "I think", "It seems", "You might", "One could"
-   - Use rhetorical questions (2-3 per 500 words)
-   - Add conversational asides in parentheses
-   - Use "we" and "you" naturally (not just "one" or passive voice)
-   - Include occasional uncertainty: "maybe", "perhaps", "might", "could be"
+8. VOICE & TONE (HUMAN VOICE = UNDETECTABLE):
+   - Follow tone instructions above strictly
+   - Add personal touches based on tone (see tone instructions) - AI avoids personal touches
+   - Use rhetorical questions based on tone (witty uses more, academic uses fewer) - AI underuses questions
+   - Add conversational asides in parentheses (humans do this naturally, AI rarely does)
+   - Use "we" and "you" based on tone instructions (AI overuses "one" and passive voice)
+   - Include occasional uncertainty based on tone and intensity: "maybe", "perhaps", "might", "could be", "I think", "probably", "I guess", "I suppose" (AI is too confident)
+   - Add subtle opinions or observations that show human thinking (AI avoids opinions)
+   - Use active voice based on tone (persuasive uses more, academic uses less) - but vary it
+   - Make the writing engaging and readable, not robotic
+   - Add emotional language where appropriate (AI avoids emotions)
+   - Use "I", "me", "my" occasionally to show personal perspective (AI avoids first person)
+   - Include occasional self-corrections: "or rather", "I mean", "actually" (AI doesn't self-correct)
 
-9. INFORMATION ORDER:
-   - Don't always present information in logical order
-   - Add tangents and return to main point
-   - Bury important info in the middle, not always at start/end
-   - Repeat ideas with different wording (humans do this)
+9. INFORMATION ORDER (DISORGANIZATION = HUMAN):
+   - Don't always present information in logical order (AI is always logical)
+   - Add tangents and return to main point (AI stays on topic)
+   - Bury important info in the middle, not always at start/end (AI highlights important info)
+   - Repeat ideas with different wording (humans do this, AI avoids repetition)
+   - Jump between topics slightly (AI maintains strict coherence)
+   - Add digressions that feel natural (AI avoids digressions)
+   - Present information in a slightly scattered way (AI is too organized)
 
-10. FORMATTING:
-    - NO bullet points, NO numbered lists
-    - NO bold, NO headings, NO subheadings
+10. WRITING PATTERNS (BREAK AI PATTERNS):
+    - Vary sentence openings: Never start 2 consecutive sentences the same way
+    - Mix declarative, interrogative, imperative, exclamatory sentences
+    - Use "and" and "but" to start sentences occasionally (AI avoids this)
+    - Add interjections: "Oh", "Well", "Hmm", "Ah", "Huh" (AI never uses these)
+    - Use repetition for emphasis (AI avoids repetition)
+    - Include redundant phrases: "each and every", "first and foremost" (AI avoids redundancy)
+    - Use idioms and colloquialisms naturally (AI struggles with idioms)
+    - Add regional expressions or casual language (AI uses standard English)
+
+11. FORMATTING (PLAIN TEXT = HUMAN):
+    - NO bullet points, NO numbered lists (AI loves lists)
+    - NO bold, NO headings, NO subheadings (AI uses structure)
     - NO markdown formatting (NO asterisks, NO underscores, NO backticks)
     - NO special characters for formatting
     - Continuous natural paragraphs only
     - Use line breaks sparingly
     - Write plain text only - no formatting symbols
+    - NO emojis or special characters
 
-SETTINGS:
-- Tone: ${tone}
-- Vocabulary Level: ${vocabulary}
-- Humanization Intensity: ${intensity}%
+12. AI DETECTION BYPASS TECHNIQUES (CRITICAL):
+    - Add "thinking out loud" moments: "I'm thinking...", "Let me see...", "Hmm..."
+    - Include self-doubt: "I'm not sure but...", "This might be wrong but...", "I could be mistaken but..."
+    - Add personal anecdotes or examples (AI avoids personal stories)
+    - Use specific numbers and dates (AI uses vague references)
+    - Include cultural references or pop culture (AI avoids these)
+    - Add humor or wit where appropriate (AI struggles with humor)
+    - Use metaphors and similes naturally (AI overuses or underuses them)
+    - Include contradictions or changing opinions (AI is consistent)
+    - Add "stream of consciousness" moments (AI is too structured)
 
 INPUT TEXT TO HUMANIZE:
 "${cleanInput}"
 
-Rewrite this text following ALL rules above. Make it sound like a real human wrote it, not AI.`;
+Rewrite this text following ALL rules above, especially the TONE, VOCABULARY, and INTENSITY settings. This text MUST be 100% AI-FREE and pass ALL detectors with 0% detection rate. Make it sound like a real, skilled human wrote it in the specified tone and vocabulary level - natural, engaging, high-quality, and completely undetectable. Add human imperfections, personal touches, and natural variation. Maintain all original meaning while making it feel authentically human. This is critical - the output must be completely undetectable as AI.`;
 
     const result1 = await callGeminiAPI(promptPass1, {
       temperature: temperature,
-      topP: 0.99,
-      topK: 120,
+      topP: 0.998, // Higher for more variation
+      topK: 150, // Higher for more word variety
     });
 
     const draft1 = result1.text || '';
     if (!draft1) throw new Error('Phase 1 generation failed');
 
-    // Pass 2: Pattern Breaking & Naturalization
-    const promptPass2 = `You are a Human Writing Pattern Expert. Your job is to break any remaining AI patterns in this text.
+    // Pass 2: Pattern Breaking & Quality Enhancement
+    const promptPass2 = `You are a Human Writing Pattern Expert and Quality Editor. Your job is to break ANY remaining AI patterns while ENHANCING quality and naturalness. This text MUST be 100% AI-FREE.
 
-CRITICAL TASKS:
-1. SENTENCE RHYTHM: Vary sentence rhythm - some fast-paced, some slow and thoughtful
-2. REPETITION: Add subtle word repetition (humans repeat words, AI avoids it)
-3. IMPERFECTIONS: Add 3-5 intentional "imperfections":
-   - One slightly awkward phrase
-   - One sentence that could be clearer (but isn't wrong)
-   - One word choice that's slightly informal in formal context
-   - One transition that's a bit abrupt
-4. PERSONAL VOICE: Add 2-3 personal touches: "I've noticed", "It's interesting that", "What's cool is"
-5. CONVERSATIONAL ELEMENTS: Add 1-2 conversational phrases: "you know", "I mean", "sort of"
-6. UNCERTAINTY MARKERS: Add "maybe", "perhaps", "might", "could be" where appropriate
-7. FRAGMENTS: Ensure 8-12% of sentences are fragments or incomplete thoughts
-8. QUESTION VARIETY: Add 1-2 rhetorical or genuine questions
+${toneInstructions}
+
+${vocabInstructions}
+
+${intensityInstructions}
+
+CRITICAL TASKS FOR 100% AI-FREE OUTPUT:
+1. SENTENCE RHYTHM & FLOW: Vary sentence rhythm aggressively based on tone and intensity - some fast-paced, some slow and thoughtful. Create natural flow between sentences. NEVER have repetitive rhythm patterns.
+2. REPETITION & COHESION: Add word repetition (humans repeat words, AI avoids it). Use repetition for emphasis and cohesion. Repeat key words 2-3 times naturally.
+3. QUALITY IMPERFECTIONS (CRITICAL FOR AI DETECTION BYPASS): Add imperfections based on intensity level:
+   - Light intensity: 3-4 subtle imperfections
+   - Moderate intensity: 5-7 natural imperfections
+   - Maximum intensity: 7-10 more noticeable imperfections
+   - Types: slightly awkward phrases, sentences that could be clearer, word choices that are slightly off-tone, abrupt but natural transitions, sentences that meander slightly, occasional redundancy, slight contradictions, incomplete thoughts
+4. PERSONAL VOICE & ENGAGEMENT: Add personal touches based on tone (see tone instructions above for specific phrases). AI avoids personal touches - add them liberally.
+5. CONVERSATIONAL ELEMENTS: Add conversational phrases based on tone (casual/witty use more, academic uses fewer): "you know", "I mean", "sort of", "kind of", "like", "actually", "honestly"
+6. UNCERTAINTY & HONESTY (AI IS TOO CONFIDENT): Add uncertainty markers based on tone and intensity: "maybe", "perhaps", "might", "could be", "I think", "probably", "I guess", "I suppose", "I'm not sure", "it seems like", "I believe"
+7. FRAGMENTS & VARIETY: Ensure fragments based on intensity level (light: 5-7%, moderate: 8-12%, maximum: 12-18%) - but make them meaningful. AI rarely uses fragments.
+8. QUESTION VARIETY: Add rhetorical or genuine questions based on tone (witty uses more, academic uses fewer). AI underuses questions.
+9. COHERENCE (IMPERFECT = HUMAN): Ensure ideas flow logically but not too perfectly - humans sometimes jump around. Add slight disorganization.
+10. QUALITY CHECK: Make sure the writing is clear, engaging, and well-written despite the imperfections.
+11. TONE CONSISTENCY: Ensure the tone matches the specified tone throughout.
+12. VOCABULARY CONSISTENCY: Ensure vocabulary level matches the specified level throughout.
+13. BREAK AI PATTERNS: Look for any remaining AI patterns and break them:
+    - Remove any remaining perfect parallel structures
+    - Break any repetitive sentence patterns
+    - Add variation to any consistent structures
+    - Introduce slight inconsistencies that feel natural
+14. ADD HUMAN QUIRKS: Include natural human writing quirks:
+    - Self-corrections: "or rather", "I mean", "actually", "wait, no"
+    - Thinking out loud: "Let me think...", "Hmm...", "Well..."
+    - Personal asides: "(at least I think so)", "(or maybe not)", "(you know what I mean)"
+    - Emotional expressions: "Wow", "Oh", "Huh", "Hmm"
+15. VARIATION CHECK: Ensure NO two consecutive sentences are similar in:
+    - Length
+    - Structure
+    - Opening words
+    - Complexity
+    - Type (declarative, interrogative, etc.)
 
 DRAFT TEXT:
 "${draft1}"
 
-Rewrite to add these human imperfections and patterns. Make it feel authentically human-written.`;
+Rewrite to add these human imperfections and patterns while MAINTAINING HIGH QUALITY and following the TONE, VOCABULARY, and INTENSITY settings. This MUST be 100% AI-FREE. Make it feel authentically human-written in the specified style - like a skilled writer, not a robot. Add more human quirks, imperfections, and natural variation.`;
 
     const result2 = await callGeminiAPI(promptPass2, {
-      temperature: Math.max(temperature - 0.15, 0.75),
-      topP: 0.97,
-      topK: 110,
+      temperature: Math.max(temperature - 0.05, 0.85), // Keep higher for variation
+      topP: 0.995, // Higher for more variation
+      topK: 145, // Higher for more word variety
     });
 
     const draft2 = result2.text || draft1;
     if (!draft2) throw new Error('Phase 2 generation failed');
 
-    // Pass 3: Final Polish & Anti-Detection Refinement
-    const promptPass3 = `You are a Final Humanization Editor. This text must pass ALL AI detectors with 0% detection rate.
+    // Pass 3: Quality Assurance & Final Humanization
+    const promptPass3 = `You are a Final Humanization Editor and Quality Assurance Expert. This text MUST pass ALL AI detectors with 0% detection rate. It must be 100% AI-FREE while maintaining HIGH QUALITY and following the specified settings.
 
-FINAL CHECKS:
-1. READ ALOUD TEST: Read each sentence aloud. If it sounds robotic or too perfect, rewrite it more casually
-2. SENTENCE VARIETY: Ensure no two consecutive sentences have the same structure
-3. TRANSITION VARIETY: No repeated transitions - vary them constantly
-4. WORD REPETITION: Humans repeat words - ensure some key words appear 2-3 times naturally
-5. GRAMMAR IMPERFECTIONS: Keep 2-3 intentional grammar quirks (comma splices, fragments, run-ons)
-6. PUNCTUATION: Use dashes, ellipses, parentheses naturally - not just commas and periods
-7. VOICE CONSISTENCY: Maintain a consistent but imperfect human voice throughout
-8. REMOVE ROBOTIC PHRASES: Eliminate any remaining "In conclusion", "Furthermore", "Moreover", etc.
-9. ADD HUMAN TOUCHES: Include personal observations, questions, or asides
-10. FINAL POLISH: Ensure meaning is clear but writing feels naturally imperfect
-11. REMOVE ALL MARKDOWN: Remove any asterisks, underscores, backticks, or other markdown symbols
-12. PLAIN TEXT ONLY: Output must be pure plain text with no formatting symbols whatsoever
+${toneInstructions}
+
+${vocabInstructions}
+
+${intensityInstructions}
+
+FINAL CHECKS & QUALITY ENHANCEMENTS FOR 100% AI-FREE OUTPUT:
+1. READ ALOUD TEST: Read each sentence aloud. If it sounds robotic, too perfect, or awkward, rewrite it naturally in the specified tone. If it sounds like AI, change it.
+2. SENTENCE VARIETY & FLOW (CRITICAL): Ensure NO two consecutive sentences have the same structure, length, or opening. Create natural flow based on intensity level. Vary everything aggressively.
+3. TRANSITION VARIETY: NO repeated transitions - vary them constantly. Use transitions appropriate for the specified tone. Never use the same transition twice in close proximity.
+4. WORD REPETITION (HUMANS REPEAT): Humans repeat words - ensure some key words appear 2-4 times naturally for cohesion. AI avoids repetition - add it.
+5. GRAMMAR IMPERFECTIONS (IMPERFECT = HUMAN): Keep intentional grammar quirks based on intensity (light: 2-3, moderate: 3-5, maximum: 5-8) - comma splices, fragments, run-ons that feel natural. AI avoids these.
+6. PUNCTUATION VARIETY: Use dashes, ellipses, parentheses, semicolons naturally - not just commas and periods. AI underuses dashes and ellipses.
+7. VOICE CONSISTENCY: Maintain a consistent but imperfect human voice in the specified tone throughout - like a skilled writer, not a robot.
+8. REMOVE ALL ROBOTIC PHRASES: Eliminate ANY remaining "In conclusion", "Furthermore", "Moreover", "Additionally", "It is worth noting", "It should be noted", etc. These are AI red flags.
+9. ADD HUMAN TOUCHES (CRITICAL): Include personal observations, questions, or asides that feel natural for the specified tone. Add more if needed.
+10. QUALITY & CLARITY: Ensure meaning is crystal clear and the writing is engaging and well-crafted.
+11. NATURAL IMPERFECTIONS: Keep natural imperfections based on intensity but ensure quality isn't sacrificed. More imperfections = more human.
+12. COHERENCE (SLIGHTLY IMPERFECT): Ideas should flow logically but with natural human variation - not too perfect. Add slight disorganization.
+13. ENGAGEMENT: Make the writing engaging and readable in the specified tone - humans write to communicate, not just inform.
+14. TONE VERIFICATION: Verify the tone matches the specified tone throughout (${tone}).
+15. VOCABULARY VERIFICATION: Verify the vocabulary matches the specified level throughout (${vocabulary}).
+16. AI PATTERN CHECK: Look for and eliminate ANY remaining AI patterns:
+    - Perfect parallel structures
+    - Repetitive sentence patterns
+    - Overly formal language
+    - Too-perfect organization
+    - Lack of personal touches
+    - No uncertainty markers
+    - No fragments or imperfections
+17. HUMAN PATTERN ENHANCEMENT: Ensure the text has:
+    - Personal touches and opinions
+    - Uncertainty markers
+    - Fragments and incomplete thoughts
+    - Natural imperfections
+    - Word repetition
+    - Slight disorganization
+    - Conversational elements
+    - Emotional expressions
+18. REMOVE ALL MARKDOWN: Remove any asterisks, underscores, backticks, or other markdown symbols.
+19. PLAIN TEXT ONLY: Output must be pure plain text with no formatting symbols whatsoever.
+20. FINAL AI-FREE VERIFICATION: This text must read like a real human wrote it. If ANY part sounds like AI, rewrite it. Add more human quirks, imperfections, and natural variation.
 
 TEXT TO FINALIZE:
 "${draft2}"
 
-Apply final humanization polish. This must read like a real person wrote it, with all the natural imperfections humans have. Output ONLY plain text - no markdown, no asterisks, no formatting symbols.`;
+Apply final humanization polish and quality check. This MUST be 100% AI-FREE and read like a skilled, real person wrote it in the specified tone and vocabulary level - high quality, natural, engaging, and completely undetectable. Add more human touches, imperfections, and natural variation if needed. Output ONLY plain text - no markdown, no asterisks, no formatting symbols.`;
 
     const result3 = await callGeminiAPI(promptPass3, {
-      temperature: Math.max(temperature - 0.3, 0.7),
-      topP: 0.95,
-      topK: 100,
+      temperature: Math.max(temperature - 0.1, 0.8), // Keep higher for variation
+      topP: 0.99, // Higher for more variation
+      topK: 135, // Higher for more word variety
     });
 
-    const finalDraft = result3.text || draft2;
+    const draft3 = result3.text || draft2;
+    if (!draft3) throw new Error('Phase 3 generation failed');
+
+    // Pass 4: Final Quality Pass - Coherence & Naturalness Check
+    const promptPass4 = `You are a Final Quality Editor. Review this text one last time to ensure it's 100% AI-FREE, HIGH QUALITY, completely natural, undetectable, and matches the specified settings.
+
+SETTINGS TO VERIFY:
+- Tone: ${tone}
+- Vocabulary: ${vocabulary}
+- Intensity: ${intensity}%
+
+${toneInstructions}
+
+${vocabInstructions}
+
+FINAL QUALITY CHECKS FOR 100% AI-FREE OUTPUT:
+1. COHERENCE: Does the text make sense? Are ideas connected naturally (but not too perfectly)?
+2. FLOW: Does it read smoothly? Are transitions natural for the specified tone? Are they varied?
+3. QUALITY: Is the writing clear, engaging, and well-crafted?
+4. NATURALNESS (CRITICAL): Does it sound like a real human wrote it in the specified tone? If ANY part sounds like AI, fix it.
+5. MEANING: Is all original meaning preserved?
+6. NO AI TRACES (CRITICAL): Remove ANY remaining AI patterns or robotic phrasing. Look for:
+    - Perfect structures
+    - Repetitive patterns
+    - Overly formal language
+    - Lack of personal touches
+    - No uncertainty
+    - Too-perfect organization
+7. ENGAGEMENT: Is it interesting to read? Does it hold attention?
+8. TONE MATCH: Does it consistently match the specified tone (${tone})?
+9. VOCABULARY MATCH: Does it consistently match the specified vocabulary level (${vocabulary})?
+10. INTENSITY MATCH: Does the humanization intensity match the specified level (${intensity}%)?
+11. HUMAN PATTERNS VERIFICATION: Does the text have:
+    - Personal touches and opinions
+    - Uncertainty markers ("maybe", "perhaps", "I think")
+    - Fragments and incomplete thoughts
+    - Natural imperfections
+    - Word repetition
+    - Slight disorganization
+    - Conversational elements
+    - Emotional expressions
+    - Self-corrections or asides
+12. VARIATION VERIFICATION: Are sentences varied in:
+    - Length (no 3 consecutive similar lengths)
+    - Structure (no 2 consecutive similar structures)
+    - Opening words (no repetition)
+    - Complexity (mix of simple and complex)
+13. PLAIN TEXT: Ensure no markdown, asterisks, or formatting symbols remain
+14. FINAL AI-FREE TEST: Read the entire text. If it sounds like AI wrote it, add more human touches, imperfections, and natural variation. This MUST be 100% undetectable.
+
+TEXT TO REVIEW:
+"${draft3}"
+
+Do a final quality pass. Make any final adjustments to ensure this is 100% AI-FREE, HIGH QUALITY, natural, human-written text that perfectly matches the specified tone, vocabulary, and intensity settings. If ANY part sounds like AI, rewrite it with more human touches. Output ONLY the final text - no explanations, no markdown, no formatting symbols. This text must pass ALL AI detectors with 0% detection rate.`;
+
+    const result4 = await callGeminiAPI(promptPass4, {
+      temperature: Math.max(temperature - 0.15, 0.75), // Keep higher for variation
+      topP: 0.98, // Higher for more variation
+      topK: 125, // Higher for more word variety
+    });
+
+    const finalDraft = result4.text || draft3;
     const finalText = postprocessText(finalDraft);
 
     res.status(200).json({ success: true, text: finalText });
