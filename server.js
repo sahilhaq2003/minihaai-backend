@@ -462,49 +462,10 @@ app.post('/api/auth/signup', async (req, res) => {
     const savedUser = await user.save();
     console.log('✅ User saved to MongoDB:', savedUser.email);
 
-    // Send verification email
-    const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.vercel.app';
-    const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
-    
-    const emailHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #e11d48;">Welcome to MinihaAI!</h2>
-        <p>Hi ${user.name},</p>
-        <p>Thank you for signing up! Please verify your email address by clicking the button below:</p>
-        <a href="${verificationUrl}" style="display: inline-block; padding: 12px 24px; background-color: #e11d48; color: white; text-decoration: none; border-radius: 8px; margin: 20px 0;">Verify Email Address</a>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style="color: #666; word-break: break-all;">${verificationUrl}</p>
-        <p>This link will expire in 24 hours.</p>
-        <p>If you didn't create an account, please ignore this email.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="color: #999; font-size: 12px;">© 2025 MinihaAI. All rights reserved.</p>
-      </div>
-    `;
-    
-    const emailResult = await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
-    
-    // Log email result but don't fail signup if email fails (user can resend)
-    if (!emailResult.success) {
-      console.error('❌ Failed to send verification email:', emailResult.message || emailResult.error);
-      // Still return success but warn about email
-      return res.status(201).json({
-        success: true,
-        message: 'Account created! However, verification email could not be sent. Please use "Resend Verification" if needed.',
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          avatar: user.picture,
-          isPremium: user.is_premium,
-          emailVerified: user.email_verified
-        },
-        emailWarning: true
-      });
-    }
-
+    // Send response immediately (don't wait for email)
     res.status(201).json({
       success: true,
-      message: 'Account created! Please check your email to verify your account.',
+      message: 'Account created successfully! Please check your email to verify your account.',
       user: {
         id: user.id,
         name: user.name,
@@ -514,6 +475,41 @@ app.post('/api/auth/signup', async (req, res) => {
         emailVerified: user.email_verified
       }
     });
+
+    // Send verification email in the background (non-blocking)
+    // This doesn't delay the response to the user
+    (async () => {
+      try {
+        const frontendUrl = process.env.FRONTEND_URL || 'https://minihaai.vercel.app';
+        const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
+        
+        const emailHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #e11d48;">Welcome to MinihaAI!</h2>
+            <p>Hi ${user.name},</p>
+            <p>Thank you for signing up! Please verify your email address by clicking the button below:</p>
+            <a href="${verificationUrl}" style="display: inline-block; padding: 12px 24px; background-color: #e11d48; color: white; text-decoration: none; border-radius: 8px; margin: 20px 0;">Verify Email Address</a>
+            <p>Or copy and paste this link into your browser:</p>
+            <p style="color: #666; word-break: break-all;">${verificationUrl}</p>
+            <p>This link will expire in 24 hours.</p>
+            <p>If you didn't create an account, please ignore this email.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="color: #999; font-size: 12px;">© 2025 MinihaAI. All rights reserved.</p>
+          </div>
+        `;
+        
+        const emailResult = await sendEmail(email, 'Verify your MinihaAI account', emailHtml);
+        
+        if (emailResult.success) {
+          console.log('✅ Verification email sent successfully to:', email);
+        } else {
+          console.error('❌ Failed to send verification email:', emailResult.message || emailResult.error);
+        }
+      } catch (error) {
+        console.error('❌ Error sending verification email in background:', error);
+        // Email failure doesn't affect user signup - they can resend later
+      }
+    })();
   } catch (error) {
     console.error("Signup Error Details:", {
       message: error.message,
