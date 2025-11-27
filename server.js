@@ -1,7 +1,7 @@
 /**
  * BACKEND SERVER CODE (Node.js / Express / MongoDB)
  * 
- * Dependencies: npm install express cors body-parser google-auth-library mongoose dotenv uuid bcryptjs
+ * Dependencies: npm install express cors body-parser mongoose dotenv uuid bcryptjs
  * Run: node server.js
  */
 
@@ -10,7 +10,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const { OAuth2Client } = require('google-auth-library');
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
@@ -21,7 +20,6 @@ const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID_HERE';
 
 // --- MONGODB CONNECTION ---
 // Use environment variable or fallback (password is URL-encoded: @ = %40)
@@ -48,7 +46,6 @@ if (!process.env.MONGODB_URI) {
   const uriPreview = MONGODB_URI.replace(/mongodb\+srv:\/\/[^:]+:[^@]+@/, 'mongodb+srv://***:***@');
   console.log('  URI Preview:', uriPreview.substring(0, 80) + '...');
 }
-console.log('  GOOGLE_CLIENT_ID:', CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE' ? 'Set ✓' : 'Missing ⚠️');
 console.log('  PORT:', PORT);
 
 // Connect to MongoDB with retry logic
@@ -156,7 +153,6 @@ const userSchema = new mongoose.Schema({
   provider: { type: String, default: 'email' },
   is_premium: { type: Boolean, default: false },
   premium_expires_at: { type: Date },
-  google_id: { type: String },
   email_verified: { type: Boolean, default: false },
   verification_token: { type: String },
   verification_token_expires: { type: Date },
@@ -195,8 +191,6 @@ const paymentRequestSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
 const PaymentRequest = mongoose.model('PaymentRequest', paymentRequestSchema);
-
-const client = new OAuth2Client(CLIENT_ID);
 
 // Helper function to check and update expired premium status
 const checkAndUpdatePremiumExpiration = async (user) => {
@@ -327,7 +321,6 @@ app.get('/api/diagnose', async (req, res) => {
     environment: {
       nodeEnv: process.env.NODE_ENV || 'not set',
       port: PORT,
-      hasGoogleClientId: CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE'
     }
   };
   
@@ -342,103 +335,6 @@ app.get('/api/diagnose', async (req, res) => {
   }
   
   res.json(diagnostics);
-});
-
-// --- GOOGLE AUTH ---
-app.post('/api/auth/google', async (req, res) => {
-  const { token } = req.body;
-
-  try {
-    // SPECIAL HANDLING FOR DEMO/TESTING
-    if (token === 'dummy_token_for_simulation') {
-      const demoEmail = 'demo_user@example.com';
-      let user = await User.findOne({ email: demoEmail });
-      
-      if (!user) {
-        user = new User({
-          id: uuidv4(),
-          email: demoEmail,
-          name: 'Demo Google User',
-          picture: 'https://api.dicebear.com/7.x/avataaars/svg?seed=google_demo',
-          provider: 'google',
-          google_id: 'dummy_google_id_12345',
-          is_premium: false,
-          created_at: new Date()
-        });
-        await user.save();
-      }
-      
-      // Check and update premium expiration
-      await checkAndUpdatePremiumExpiration(user);
-      const updatedUser = await User.findOne({ id: user.id });
-      
-      return res.status(200).json({
-        success: true,
-        user: {
-          id: updatedUser.id,
-          name: updatedUser.name,
-          email: updatedUser.email,
-          avatar: updatedUser.picture,
-          isPremium: updatedUser.is_premium,
-          premiumExpiresAt: updatedUser.premium_expires_at || null
-        }
-      });
-    }
-
-    // REAL GOOGLE VERIFICATION
-    const ticket = await client.verifyIdToken({
-      idToken: token,
-      audience: CLIENT_ID,
-    });
-    
-    const payload = ticket.getPayload();
-    const googleUserId = payload['sub'];
-    const email = payload['email'];
-    const name = payload['name'];
-    const picture = payload['picture'];
-
-    let user = await User.findOne({ email });
-
-    if (!user) {
-      user = new User({
-        id: uuidv4(),
-        email,
-        name,
-        picture,
-        provider: 'google',
-        google_id: googleUserId,
-        is_premium: false,
-        created_at: new Date()
-      });
-      await user.save();
-    } else if (user.provider !== 'google') {
-      user.google_id = googleUserId;
-      user.provider = 'google';
-      user.picture = picture;
-      await user.save();
-    }
-
-    // Check and update premium expiration
-    await checkAndUpdatePremiumExpiration(user);
-    const updatedUser = await User.findOne({ id: user.id });
-
-    res.status(200).json({
-      success: true,
-      user: {
-        id: updatedUser.id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        avatar: updatedUser.picture,
-        isPremium: updatedUser.is_premium,
-        emailVerified: updatedUser.email_verified || true, // Google users are auto-verified
-        premiumExpiresAt: updatedUser.premium_expires_at || null
-      }
-    });
-
-  } catch (error) {
-    console.error('Google Auth Error:', error);
-    res.status(401).json({ success: false, message: 'Invalid Token' });
-  }
 });
 
 // --- EMAIL SIGNUP ---
@@ -567,10 +463,6 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (!user) {
       return res.status(400).json({ success: false, message: 'User not found' });
-    }
-
-    if (user.provider === 'google') {
-      return res.status(400).json({ success: false, message: 'Please login with Google' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password);
@@ -864,14 +756,6 @@ app.post('/api/auth/change-password', async (req, res) => {
       return res.status(404).json({ 
         success: false, 
         message: 'User not found' 
-      });
-    }
-
-    // Check if user has password (not Google OAuth user)
-    if (!user.password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Password change not available for Google accounts. Please use Google sign-in.' 
       });
     }
 

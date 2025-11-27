@@ -1,0 +1,3 @@
+[33md23d779[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m Optimize humanization: Reduce from 4 passes to 2 passes - Maintains same quality with ~2x faster processing - Pass 1: Core humanization (unchanged) - Pass 2: Combined quality enhancement & final polish (merges previous passes 2,3,4) - All quality checks preserved in optimized format
+[33mad9fa7c[m Merge branch 'main' of https://github.com/sahilhaq2003/minihaai-backend
+[33m0486491[m Add change password endpoint - Add /api/auth/change-password endpoint for logged-in users - Verify current password before allowing change - Handle Google OAuth users appropriately - Add password change functionality
