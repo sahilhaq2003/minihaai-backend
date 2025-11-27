@@ -155,6 +155,7 @@ const userSchema = new mongoose.Schema({
   picture: { type: String },
   provider: { type: String, default: 'email' },
   is_premium: { type: Boolean, default: false },
+  premium_expires_at: { type: Date },
   google_id: { type: String },
   email_verified: { type: Boolean, default: false },
   verification_token: { type: String },
@@ -196,6 +197,23 @@ const Transaction = mongoose.model('Transaction', transactionSchema);
 const PaymentRequest = mongoose.model('PaymentRequest', paymentRequestSchema);
 
 const client = new OAuth2Client(CLIENT_ID);
+
+// Helper function to check and update expired premium status
+const checkAndUpdatePremiumExpiration = async (user) => {
+  if (!user || !user.is_premium) {
+    return user;
+  }
+
+  // If premium_expires_at is set and has passed, expire the premium
+  if (user.premium_expires_at && new Date() > user.premium_expires_at) {
+    user.is_premium = false;
+    user.premium_expires_at = null;
+    await user.save();
+    console.log(`⏰ Premium expired for user: ${user.email} (${user.id})`);
+  }
+
+  return user;
+};
 
 // --- EMAIL SERVICE SETUP ---
 const createEmailTransporter = () => {
@@ -350,14 +368,19 @@ app.post('/api/auth/google', async (req, res) => {
         await user.save();
       }
       
+      // Check and update premium expiration
+      await checkAndUpdatePremiumExpiration(user);
+      const updatedUser = await User.findOne({ id: user.id });
+      
       return res.status(200).json({
         success: true,
         user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          avatar: user.picture,
-          isPremium: user.is_premium
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          avatar: updatedUser.picture,
+          isPremium: updatedUser.is_premium,
+          premiumExpiresAt: updatedUser.premium_expires_at || null
         }
       });
     }
@@ -395,15 +418,20 @@ app.post('/api/auth/google', async (req, res) => {
       await user.save();
     }
 
+    // Check and update premium expiration
+    await checkAndUpdatePremiumExpiration(user);
+    const updatedUser = await User.findOne({ id: user.id });
+
     res.status(200).json({
       success: true,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        avatar: user.picture,
-        isPremium: user.is_premium,
-        emailVerified: user.email_verified || true // Google users are auto-verified
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        avatar: updatedUser.picture,
+        isPremium: updatedUser.is_premium,
+        emailVerified: updatedUser.email_verified || true, // Google users are auto-verified
+        premiumExpiresAt: updatedUser.premium_expires_at || null
       }
     });
 
@@ -562,15 +590,20 @@ app.post('/api/auth/login', async (req, res) => {
     }
     */
 
+    // Check and update premium expiration
+    await checkAndUpdatePremiumExpiration(user);
+    const updatedUser = await User.findOne({ id: user.id });
+
     res.status(200).json({
       success: true,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        avatar: user.picture,
-        isPremium: user.is_premium,
-        emailVerified: user.email_verified
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        avatar: updatedUser.picture,
+        isPremium: updatedUser.is_premium,
+        emailVerified: updatedUser.email_verified,
+        premiumExpiresAt: updatedUser.premium_expires_at || null
       }
     });
   } catch (error) {
@@ -941,8 +974,18 @@ app.post('/api/admin/payments/approve', async (req, res) => {
     paymentRequest.admin_notes = adminNotes || '';
     await paymentRequest.save();
 
-    // Update user to premium
-    await User.findOneAndUpdate({ id: paymentRequest.user_id }, { is_premium: true });
+    // Calculate expiration date (30 days from now)
+    const expirationDate = new Date();
+    expirationDate.setDate(expirationDate.getDate() + 30);
+
+    // Update user to premium with 30-day expiration
+    await User.findOneAndUpdate(
+      { id: paymentRequest.user_id }, 
+      { 
+        is_premium: true,
+        premium_expires_at: expirationDate
+      }
+    );
 
     // Create transaction record
     const transactionId = uuidv4();
@@ -1023,19 +1066,27 @@ app.get('/api/payment/status/:userId', async (req, res) => {
 
     // Get current user to check premium status
     const user = await User.findOne({ id: userId });
+    
+    let isPremium = false;
+    if (user) {
+      // Check and update premium expiration
+      await checkAndUpdatePremiumExpiration(user);
+      const updatedUser = await User.findOne({ id: userId });
+      isPremium = updatedUser?.is_premium || false;
+    }
 
     if (!paymentRequest) {
       return res.status(200).json({ 
         success: true, 
         hasPending: false,
-        isPremium: user?.is_premium || false
+        isPremium: isPremium
       });
     }
 
     res.status(200).json({ 
       success: true, 
       hasPending: paymentRequest.status === 'pending',
-      isPremium: user?.is_premium || false,
+      isPremium: isPremium,
       paymentRequest: {
         id: paymentRequest.id,
         status: paymentRequest.status,
@@ -1064,8 +1115,18 @@ app.post('/api/payment/process', async (req, res) => {
     // Simulate payment processing delay
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // Update user to premium
-    await User.findOneAndUpdate({ id: userId }, { is_premium: true });
+    // Calculate expiration date (30 days from now)
+    const expirationDate = new Date();
+    expirationDate.setDate(expirationDate.getDate() + 30);
+
+    // Update user to premium with 30-day expiration
+    await User.findOneAndUpdate(
+      { id: userId }, 
+      { 
+        is_premium: true,
+        premium_expires_at: expirationDate
+      }
+    );
 
     // Record transaction
     const transactionId = uuidv4();
@@ -2119,15 +2180,22 @@ app.get('/api/user/:userId', async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
+    // Check and update premium expiration
+    await checkAndUpdatePremiumExpiration(user);
+    
+    // Refresh user data after expiration check
+    const updatedUser = await User.findOne({ id: userId });
+
     res.status(200).json({
       success: true,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        avatar: user.picture,
-        isPremium: user.is_premium,
-        emailVerified: user.email_verified || true // Google users are auto-verified
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        avatar: updatedUser.picture,
+        isPremium: updatedUser.is_premium,
+        emailVerified: updatedUser.email_verified || true, // Google users are auto-verified
+        premiumExpiresAt: updatedUser.premium_expires_at || null
       }
     });
   } catch (error) {
