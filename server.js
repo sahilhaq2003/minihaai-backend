@@ -1019,26 +1019,33 @@ app.post('/api/admin/payments/reject', async (req, res) => {
 app.get('/api/payment/status/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    
+    // Check for any recent payment requests (pending or approved)
     const paymentRequest = await PaymentRequest.findOne({ 
-      user_id: userId, 
-      status: 'pending' 
+      user_id: userId
     }).sort({ submitted_at: -1 });
+
+    // Get current user to check premium status
+    const user = await User.findOne({ id: userId });
 
     if (!paymentRequest) {
       return res.status(200).json({ 
         success: true, 
-        hasPending: false 
+        hasPending: false,
+        isPremium: user?.is_premium || false
       });
     }
 
     res.status(200).json({ 
       success: true, 
-      hasPending: true,
+      hasPending: paymentRequest.status === 'pending',
+      isPremium: user?.is_premium || false,
       paymentRequest: {
         id: paymentRequest.id,
         status: paymentRequest.status,
         submitted_at: paymentRequest.submitted_at,
-        amount: paymentRequest.amount
+        amount: paymentRequest.amount,
+        reviewed_at: paymentRequest.reviewed_at
       }
     });
   } catch (error) {
