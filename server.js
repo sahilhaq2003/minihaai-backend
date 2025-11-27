@@ -972,17 +972,48 @@ const callGeminiAPI = async (prompt, config = {}) => {
 // Helper functions
 const preprocessText = (text) => {
   return text
-    .replace(/\*\*/g, '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*/g, '') // Remove bold markdown
+    .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+    .replace(/`([^`]+)`/g, '$1') // Remove inline code
     .trim();
 };
 
 const postprocessText = (text) => {
   let result = text.trim();
+  
+  // Remove all markdown formatting - do this first
+  result = result.replace(/```[\s\S]*?```/g, ''); // Remove code blocks first
+  result = result.replace(/`([^`]+)`/g, '$1'); // Remove inline code
+  result = result.replace(/\*\*/g, ''); // Remove bold **text** (double asterisks)
+  result = result.replace(/\*/g, ''); // Remove ALL single asterisks (italic *text* and standalone *)
+  result = result.replace(/__/g, ''); // Remove bold __text__
+  result = result.replace(/_/g, ''); // Remove italic _text_ and single underscores
+  result = result.replace(/~~/g, ''); // Remove strikethrough ~~text~~
+  result = result.replace(/#{1,6}\s/g, ''); // Remove markdown headers (# ## ###)
+  result = result.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1'); // Convert [link](url) to just "link"
+  
+  // Remove any remaining formatting characters
+  result = result.replace(/`/g, ''); // Remove any remaining backticks
+  
+  // Remove quotes around text
   result = result.replace(/^["']|["']$/g, '');
+  
+  // Clean up excessive newlines
   result = result.replace(/\n{3,}/g, '\n\n');
-  return result;
+  
+  // Remove any remaining asterisks in various patterns (safety check)
+  result = result.replace(/\s\*\s/g, ' '); // Remove " * " patterns
+  result = result.replace(/\*\s/g, ''); // Remove "* " at start of words
+  result = result.replace(/\s\*/g, ''); // Remove " *" at end of words
+  result = result.replace(/\*/g, ''); // Final pass - remove ANY remaining asterisks
+  
+  // Clean up multiple spaces that may have been created
+  result = result.replace(/\s{2,}/g, ' ');
+  
+  // Clean up spaces around punctuation
+  result = result.replace(/\s+([.,!?;:])/g, '$1');
+  
+  return result.trim();
 };
 
 // Humanize text endpoint
@@ -1065,8 +1096,11 @@ CRITICAL ANTI-DETECTION RULES:
 10. FORMATTING:
     - NO bullet points, NO numbered lists
     - NO bold, NO headings, NO subheadings
+    - NO markdown formatting (NO asterisks, NO underscores, NO backticks)
+    - NO special characters for formatting
     - Continuous natural paragraphs only
     - Use line breaks sparingly
+    - Write plain text only - no formatting symbols
 
 SETTINGS:
 - Tone: ${tone}
@@ -1132,11 +1166,13 @@ FINAL CHECKS:
 8. REMOVE ROBOTIC PHRASES: Eliminate any remaining "In conclusion", "Furthermore", "Moreover", etc.
 9. ADD HUMAN TOUCHES: Include personal observations, questions, or asides
 10. FINAL POLISH: Ensure meaning is clear but writing feels naturally imperfect
+11. REMOVE ALL MARKDOWN: Remove any asterisks, underscores, backticks, or other markdown symbols
+12. PLAIN TEXT ONLY: Output must be pure plain text with no formatting symbols whatsoever
 
 TEXT TO FINALIZE:
 "${draft2}"
 
-Apply final humanization polish. This must read like a real person wrote it, with all the natural imperfections humans have.`;
+Apply final humanization polish. This must read like a real person wrote it, with all the natural imperfections humans have. Output ONLY plain text - no markdown, no asterisks, no formatting symbols.`;
 
     const result3 = await callGeminiAPI(promptPass3, {
       temperature: Math.max(temperature - 0.3, 0.7),
