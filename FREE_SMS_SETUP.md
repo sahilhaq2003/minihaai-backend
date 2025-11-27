@@ -26,7 +26,6 @@ Twilio Verify API is **specifically designed for OTP verification** and offers:
    - Go to Twilio Console → Verify → Services → Create new Service
    - Name it: "MinihaAI Password Reset" (or any name)
    - Copy the **Service SID** (starts with `VA...`)
-   - Example: `VA8588d84ad96316fdd3d7d0f75ff61598`
 
 4. **Add Environment Variables**
    Add these to your `.env` file:
