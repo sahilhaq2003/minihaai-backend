@@ -865,7 +865,7 @@ app.post('/api/payment/submit', async (req, res) => {
       user_id: userId,
       user_email: user.email,
       user_name: user.name,
-      amount: amount || '$19.00',
+      amount: amount || '$5.00',
       payment_id: paymentId,
       payment_receipt: paymentReceipt || '',
       payment_method: 'manual',
