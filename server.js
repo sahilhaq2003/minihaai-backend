@@ -2183,6 +2183,39 @@ app.put('/api/user/:userId/photo', async (req, res) => {
   }
 });
 
+// --- DELETE USER ACCOUNT ---
+app.delete('/api/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findOne({ id: userId });
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Delete all user-related data
+    // 1. Delete all transactions
+    await Transaction.deleteMany({ user_id: userId });
+    
+    // 2. Delete all payment requests
+    await PaymentRequest.deleteMany({ user_id: userId });
+    
+    // 3. Delete the user account
+    await User.deleteOne({ id: userId });
+
+    console.log(`✅ Account deleted for user: ${user.email} (${userId})`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Account deleted successfully'
+    });
+  } catch (error) {
+    console.error("Delete Account Error:", error);
+    res.status(500).json({ success: false, message: "Error deleting account" });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
