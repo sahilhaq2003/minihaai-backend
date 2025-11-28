@@ -394,13 +394,13 @@ app.post('/api/auth/signup', async (req, res) => {
       success: true,
       message: 'Account created successfully! Please check your email to verify your account.',
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        avatar: user.picture,
-        isPremium: user.is_premium,
-        emailVerified: user.email_verified,
-        createdAt: user.created_at || null
+        id: savedUser.id,
+        name: savedUser.name,
+        email: savedUser.email,
+        avatar: savedUser.picture,
+        isPremium: savedUser.is_premium,
+        emailVerified: savedUser.email_verified,
+        createdAt: savedUser.created_at || null
       }
     });
 
