@@ -191,9 +191,18 @@ const paymentRequestSchema = new mongoose.Schema({
   reviewed_by: { type: String }
 });
 
+// IP-based account creation tracking to prevent abuse
+const ipTrackingSchema = new mongoose.Schema({
+  ip_address: { type: String, required: true, unique: true },
+  account_count: { type: Number, default: 0 },
+  last_account_created: { type: Date, default: Date.now },
+  created_at: { type: Date, default: Date.now }
+});
+
 const User = mongoose.model('User', userSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
 const PaymentRequest = mongoose.model('PaymentRequest', paymentRequestSchema);
+const IPTracking = mongoose.model('IPTracking', ipTrackingSchema);
 
 // Helper function to check and update expired premium status
 const checkAndUpdatePremiumExpiration = async (user) => {
@@ -270,6 +279,9 @@ app.use(cors({
   credentials: true
 }));
 
+// Trust proxy to get real IP addresses (important for Railway, Render, etc.)
+app.set('trust proxy', true);
+
 app.use(bodyParser.json());
 
 // --- Health Check ---
@@ -340,10 +352,27 @@ app.get('/api/diagnose', async (req, res) => {
   res.json(diagnostics);
 });
 
+// Helper function to get client IP address
+const getClientIP = (req) => {
+  // Check for IP in various headers (for proxies like Railway, Render, etc.)
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    // x-forwarded-for can contain multiple IPs, take the first one
+    return forwarded.split(',')[0].trim();
+  }
+  const realIP = req.headers['x-real-ip'];
+  if (realIP) {
+    return realIP;
+  }
+  // Fallback to direct connection IP
+  return req.ip || req.connection.remoteAddress || 'unknown';
+};
+
 // --- EMAIL SIGNUP ---
 app.post('/api/auth/signup', async (req, res) => {
   const { email, password } = req.body;
-  console.log('📝 Signup attempt for:', email);
+  const clientIP = getClientIP(req);
+  console.log('📝 Signup attempt for:', email, 'from IP:', clientIP);
 
   // Check MongoDB connection
   if (mongoose.connection.readyState !== 1) {
@@ -357,6 +386,29 @@ app.post('/api/auth/signup', async (req, res) => {
   try {
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
+    }
+
+    // Check IP-based account creation limit (2 accounts per IP)
+    if (clientIP !== 'unknown') {
+      let ipTracking = await IPTracking.findOne({ ip_address: clientIP });
+      
+      if (!ipTracking) {
+        // First account from this IP
+        ipTracking = new IPTracking({
+          ip_address: clientIP,
+          account_count: 0,
+          last_account_created: new Date()
+        });
+      }
+      
+      // Check if limit reached (2 accounts max)
+      if (ipTracking.account_count >= 2) {
+        console.log('❌ Account creation limit reached for IP:', clientIP, 'Count:', ipTracking.account_count);
+        return res.status(429).json({ 
+          success: false, 
+          message: 'Account creation limit reached. Maximum 2 accounts allowed per device/IP address. Please upgrade to Pro plan for unlimited accounts.' 
+        });
+      }
     }
 
     const existingUser = await User.findOne({ email });
@@ -388,6 +440,31 @@ app.post('/api/auth/signup', async (req, res) => {
 
     const savedUser = await user.save();
     console.log('✅ User saved to MongoDB:', savedUser.email);
+
+    // Increment IP tracking count after successful account creation
+    if (clientIP !== 'unknown') {
+      try {
+        let ipTracking = await IPTracking.findOne({ ip_address: clientIP });
+        if (ipTracking) {
+          ipTracking.account_count += 1;
+          ipTracking.last_account_created = new Date();
+          await ipTracking.save();
+          console.log('📊 IP tracking updated for:', clientIP, 'Count:', ipTracking.account_count);
+        } else {
+          // Create new tracking entry
+          ipTracking = new IPTracking({
+            ip_address: clientIP,
+            account_count: 1,
+            last_account_created: new Date()
+          });
+          await ipTracking.save();
+          console.log('📊 New IP tracking created for:', clientIP);
+        }
+      } catch (ipError) {
+        // Don't fail signup if IP tracking fails
+        console.error('⚠️  IP tracking error (non-fatal):', ipError);
+      }
+    }
 
     // Send response immediately (don't wait for email)
     res.status(201).json({
