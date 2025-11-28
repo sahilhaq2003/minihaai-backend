@@ -399,7 +399,8 @@ app.post('/api/auth/signup', async (req, res) => {
         email: user.email,
         avatar: user.picture,
         isPremium: user.is_premium,
-        emailVerified: user.email_verified
+        emailVerified: user.email_verified,
+        createdAt: user.created_at || null
       }
     });
 
@@ -498,7 +499,8 @@ app.post('/api/auth/login', async (req, res) => {
         avatar: updatedUser.picture,
         isPremium: updatedUser.is_premium,
         emailVerified: updatedUser.email_verified,
-        premiumExpiresAt: updatedUser.premium_expires_at || null
+        premiumExpiresAt: updatedUser.premium_expires_at || null,
+        createdAt: updatedUser.created_at || null
       }
     });
   } catch (error) {
@@ -2264,7 +2266,8 @@ app.get('/api/user/:userId', async (req, res) => {
         avatar: updatedUser.picture,
         isPremium: updatedUser.is_premium,
         emailVerified: updatedUser.email_verified || true, // Google users are auto-verified
-        premiumExpiresAt: updatedUser.premium_expires_at || null
+        premiumExpiresAt: updatedUser.premium_expires_at || null,
+        createdAt: updatedUser.created_at || null
       }
     });
   } catch (error) {
